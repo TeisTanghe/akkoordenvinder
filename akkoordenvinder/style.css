@@ -192,6 +192,7 @@ textarea { width: 100%; min-height: 200px; border: 1px solid var(--line); backgr
 .ly-line { display: grid; padding: 2px 8px; border-radius: 8px; white-space: pre; cursor: pointer; }
 .ly-line.active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
 .ly-line.unsynced .ly-text { color: var(--muted); }
+.ly-line.est .ly-chords b { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
 .ly-chords { color: var(--ink); font-weight: 700; min-height: 1.2em; }
 .ly-chords b { font-weight: 700; background: var(--line); color: var(--ink); border-radius: 4px; padding: 0 .35ch; margin: 0 -.35ch; }
 .sheet.nochords .ly-chords { display: none; }
