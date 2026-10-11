@@ -385,10 +385,38 @@ async function loadDemo() {
   finally { state.busy = false; }
 }
 
+/* ---------- akkoord-popup: zo speel je dit akkoord, op elk instrument ---------- */
+const pop = { box: $('chordPop'), name: $('popName'), grid: $('popGrid'), close: $('popClose'), back: $('popBack') };
+function showChord(ch, label) {
+  if (!ch) return;
+  const v = view(), name = label || nameOf(ch, v);
+  pop.name.textContent = name;
+  pop.grid.innerHTML = Instruments.LIST.map(i => `<div class="shape"><span class="lbl">${i.name}</span>${Instruments.render(i.id, ch, { ...v, label: name })}</div>`).join('');
+  pop.box.hidden = false; pop.back.hidden = false;
+}
+const NAME_IDX = {}; window.DSP.SHARP.forEach((x, i) => NAME_IDX[x] = i); window.DSP.FLAT.forEach((x, i) => NAME_IDX[x] = i);
+function showChordByName(name) {
+  const m = String(name).match(/^([A-G](?:#|b)?)(.*)$/); if (!m) return;
+  const rest = m[2].replace(/\/.*$/, ''), v = view();
+  const q = /m7/.test(rest) ? 'm7' : /^m(?!aj)/.test(rest) ? 'min' : /7/.test(rest) ? '7' : 'maj';
+  showChord({ root: mod12(NAME_IDX[m[1]] - v.shift), q }, name);
+}
+const hidePop = () => { pop.box.hidden = true; pop.back.hidden = true; };
+pop.close.addEventListener('click', hidePop); pop.back.addEventListener('click', hidePop);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') hidePop(); });
+els.nowMain.addEventListener('click', () => { const g = state.segments[state.activeIdx]; if (g) showChord(g.chord); });
+els.cards.addEventListener('contextmenu', e => { const b = e.target.closest('.card'); if (b) { e.preventDefault(); showChord(state.segments[+b.dataset.i].chord); } });
+els.shapes.addEventListener('click', e => { const s = e.target.closest('.shape'); if (!s) return; showChordByName(s.querySelector('b').textContent); });
+els.cards.addEventListener('click', e => { const b = e.target.closest('.card'); if (b && state.mode !== 'file') showChord(state.segments[+b.dataset.i].chord); });
+
 /* ---------- start ---------- */
 renderInstruments(); renderFacts();
 loadDemo();
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  const had = !!navigator.serviceWorker.controller; let reloaded = false;
+  navigator.serviceWorker.register('sw.js').then(reg => { reg.update().catch(() => {}); setInterval(() => reg.update().catch(() => {}), 30 * 60 * 1000); }).catch(() => {});
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !reloaded) { reloaded = true; location.reload(); } });
+}
 
-return { state, els, view, nameOf, romanOf, fmt, now, onTick, seek, setMode, setStatus, copyText, renderAll, loadRecord, liveReset, liveChord, liveKey, liveTick };
+return { state, els, view, nameOf, romanOf, fmt, now, onTick, seek, setMode, setStatus, copyText, renderAll, loadRecord, liveReset, liveChord, liveKey, liveTick, showChord, showChordByName };
 })();

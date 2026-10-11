@@ -93,6 +93,29 @@ async function extractFeatures(x, sr, opts = {}) {
   const sorted = Array.from(maxima).filter(v => v > 0).sort((a, b) => a - b);
   const ref = sorted.length ? sorted[Math.floor(sorted.length * 0.5)] : 1;
 
+  // zangactiviteit: spectrale flux en energie-aandeel in het zangbereik (300-2000 Hz), gladgestreken en genormaliseerd
+  const kLo = Math.max(0, Math.floor(300 * n / sr) - kMin), kHi = Math.min(nb - 1, Math.ceil(2000 * n / sr) - kMin);
+  const rawV = new Float32Array(nF); let prevLg = new Float32Array(kHi - kLo + 1), curLg = new Float32Array(kHi - kLo + 1);
+  for (let f = 0; f < nF; f++) {
+    let fl = 0, mid = 0, tot = 0;
+    for (let k = 0; k < nb; k++) { const v = spec[f * nb + k]; tot += v * v; }
+    for (let k = kLo; k <= kHi; k++) { const v = spec[f * nb + k]; mid += v * v; curLg[k - kLo] = Math.log1p(50 * v / ref); const d = curLg[k - kLo] - prevLg[k - kLo]; if (d > 0) fl += d; }
+    [prevLg, curLg] = [curLg, prevLg];
+    rawV[f] = fl * Math.sqrt(tot > 0 ? mid / tot : 0);
+  }
+  const vocal = new Float32Array(nF);
+  for (let f = 0; f < nF; f++) { let s = 0, c = 0; for (let d = -3; d <= 3; d++) { const g = f + d; if (g >= 0 && g < nF) { s += rawV[g]; c++; } } vocal[f] = s / c; }
+  const vs = Array.from(vocal).sort((a, b) => a - b), lo = vs[Math.floor(vs.length * 0.2)] || 0, hi = vs[Math.floor(vs.length * 0.9)] || 1;
+  for (let f = 0; f < nF; f++) vocal[f] = Math.max(0, Math.min(1, (vocal[f] - lo) / ((hi - lo) || 1)));
+  const vocalOnsets = []; let vocalStart = -1, vocalEnd = -1, run = 0;
+  for (let f = 0; f < nF; f++) {
+    const on = vocal[f] > 0.5;
+    if (on && (f === 0 || vocal[f - 1] <= 0.5)) vocalOnsets.push(f);
+    run = on ? run + 1 : 0;
+    if (run >= 4 && vocalStart < 0) vocalStart = f - 3;
+    if (on) vocalEnd = f;
+  }
+
   const rawC = new Float32Array(nF * 12), rawB = new Float32Array(nF * 12);
   for (let f = 0; f < nF; f++) for (let k = 0; k < nb; k++) {
     const w = map.wOf[k]; if (!w) continue;
@@ -124,7 +147,7 @@ async function extractFeatures(x, sr, opts = {}) {
     }
   }
   progress(0.95);
-  return { nF, n, hop, sr, chroma, bass, silent, tuning, key: estimateKey(keySum) };
+  return { nF, n, hop, sr, chroma, bass, silent, tuning, key: estimateKey(keySum), vocal, vocalOnsets, vocalStart, vocalEnd };
 }
 
 /* ---------- toonsoort (Krumhansl-Schmuckler) ---------- */

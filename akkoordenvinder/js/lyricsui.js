@@ -104,16 +104,21 @@ el.file.addEventListener('change', async () => {
 
 /* Regeltijden schatten zonder tikken. Zelf getikte regels blijven staan en dienen als ankers; de rest wordt
    verdeeld naar regellengte (met extra ruimte na een witregel) en vastgeklikt op de dichtstbijzijnde akkoordwissel. */
+const SYL = l => { const w = (l.text || '').toLowerCase().match(/[a-zà-ÿ']+/g) || []; return Math.max(1, w.reduce((a, x) => a + Math.max(1, (x.match(/[aeiouyáéíóúàèëïöüâêîôû]+/g) || []).length), 0)); };
 function estimateTimes(auto) {
   const texts = lines.filter(l => L.kindOf(l) === 'text'), n = texts.length; if (!n) return false;
   const segs = App.state.segments.filter(s => s.chord);
   const dur = App.state.mode === 'file' ? App.state.duration : App.state.liveTime;
   if (!segs.length || !dur) return false;
-  // zangstart: meestal als het eerste akkoord na de intro terugkomt, anders het eerste akkoord
+  const F = App.state.feat;
+  const frameT = f => F ? (f * F.hop + F.n / 2) / F.sr : 0;
+  // zangstart: gemeten zangactiviteit; anders als het eerste akkoord na de intro terugkomt, anders het eerste akkoord
   const first = segs[0];
   const again = segs.find(s => s.start > first.end + 0.5 && s.chord.root === first.chord.root && s.chord.q === first.chord.q);
-  const start = again && again.start < Math.min(40, dur * 0.25) ? again.start : first.start;
-  const end = Math.max(start + n, Math.min(dur, segs[segs.length - 1].end) - 1);
+  let start = again && again.start < Math.min(40, dur * 0.25) ? again.start : first.start;
+  let end = Math.max(start + n, Math.min(dur, segs[segs.length - 1].end) - 1);
+  if (F && F.vocal && F.vocalStart >= 0) { start = frameT(F.vocalStart); end = Math.max(start + n, frameT(F.vocalEnd)); }
+  if (F && F.vocal) return estimateDP(texts, segs, F, start, end, auto);
   const weight = l => { const k = lines.indexOf(l), prev = lines[k - 1]; return Math.max(10, l.text.length) + (prev && L.kindOf(prev) === 'blank' ? 14 : 0); };
   const open = l => l.t == null || l.est;
   let i = 0;
@@ -138,6 +143,48 @@ function estimateTimes(auto) {
     }
     if (l.t != null) { if (l.t < prevT + 0.25) l.t = prevT + 0.25; prevT = l.t; }
   });
+  tapStack = []; save(); render();
+  if (!auto) el.progress.textContent = 'Tijden opnieuw geschat. Klopt een regel niet? Speel af en tik op die regel op het moment dat hij begint.';
+  return true;
+}
+/* Dynamisch programmeren: elke regel krijgt een kandidaat-start (akkoordwissel of zanginzet) zó dat de regelduur
+   past bij het aantal lettergrepen en er op dat moment gezongen wordt. Zelf getikte regels zijn vaste ankers. */
+function estimateDP(texts, segs, F, vStart, vEnd, auto) {
+  const n = texts.length, frameT = f => (f * F.hop + F.n / 2) / F.sr;
+  const vocalAt = t => { const f = Math.max(0, Math.min(F.nF - 1, Math.round((t * F.sr - F.n / 2) / F.hop))); let s = 0; for (let d = 0; d < 3; d++) s += F.vocal[Math.min(F.nF - 1, f + d)]; return s / 3; };
+  const gapBefore = l => { const k = lines.indexOf(l); return k > 0 && L.kindOf(lines[k - 1]) === 'blank'; };
+  const fixed = texts.map(l => (l.t != null && !l.est) ? l.t : null);
+  const cand = new Map();
+  const add = (t, chord) => { const key = Math.round(t * 10); if (!cand.has(key) || chord) cand.set(key, { t, chord }); };
+  for (const s of segs) add(s.start, true);
+  for (const f of F.vocalOnsets || []) add(frameT(f), false);
+  for (const t of fixed) if (t != null) add(t, false);
+  const C = [...cand.values()].sort((a, b) => a.t - b.t).map(c => ({ ...c, v: vocalAt(c.t) }));
+  const m = C.length; if (!m) return false;
+  const totalSyl = texts.reduce((a, l) => a + SYL(l) + (gapBefore(l) ? 4 : 0), 0);
+  const sps = Math.max(0.12, Math.min(0.7, (vEnd - vStart) / totalSyl));
+  const expDur = texts.map((l, i) => SYL(l) * sps + (i + 1 < n && gapBefore(texts[i + 1]) ? 4 * sps : 0));
+  const INF = 1e9, cost = new Float64Array(n * m).fill(INF), back = new Int32Array(n * m).fill(-1);
+  const unit = (i, j) => { if (fixed[i] != null) return Math.abs(C[j].t - fixed[i]) < 0.06 ? -20 : INF; return (1 - C[j].v) * 2.5 + (C[j].chord ? 0 : 0.5); };
+  for (let j = 0; j < m; j++) cost[j] = unit(0, j) + Math.abs(C[j].t - vStart) / Math.max(1, 6 * sps);
+  for (let i = 1; i < n; i++) {
+    const e = Math.max(0.5, expDur[i - 1]);
+    for (let j = 0; j < m; j++) {
+      const u = unit(i, j); if (u >= INF) continue;
+      let best = INF, bk = -1;
+      for (let k = j - 1; k >= 0; k--) {
+        const dt = C[j].t - C[k].t; if (dt < 0.3) continue; if (dt > 4 * e + 6) break;
+        if (cost[(i - 1) * m + k] >= INF) continue;
+        const c = cost[(i - 1) * m + k] + Math.abs(dt - e) / e;
+        if (c < best) { best = c; bk = k; }
+      }
+      if (bk >= 0) { cost[i * m + j] = best + u; back[i * m + j] = bk; }
+    }
+  }
+  let j = -1, bestC = INF;
+  for (let q = 0; q < m; q++) if (cost[(n - 1) * m + q] < bestC) { bestC = cost[(n - 1) * m + q]; j = q; }
+  if (j < 0) return false;
+  for (let i = n - 1; i >= 0; i--) { if (fixed[i] == null) { texts[i].t = C[j].t; texts[i].est = true; } j = back[i * m + j]; if (j < 0 && i > 0) return false; }
   tapStack = []; save(); render();
   if (!auto) el.progress.textContent = 'Tijden opnieuw geschat. Klopt een regel niet? Speel af en tik op die regel op het moment dat hij begint.';
   return true;
@@ -215,6 +262,8 @@ document.addEventListener('keydown', e => {
   e.preventDefault(); tap();
 });
 el.sheet.addEventListener('click', e => {
+  const badge = e.target.closest('.ly-chords b');
+  if (badge) { App.showChordByName(badge.textContent.trim()); return; }
   const n = e.target.closest('.ly-line'); if (!n) return;
   const i = +n.dataset.idx, line = lines[i]; if (!line) return;
   if (App.state.syncing) { line.t = App.now(); line.est = false; tapStack.push(i); save(); render(); }
