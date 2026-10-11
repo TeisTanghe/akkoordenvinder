@@ -76,8 +76,12 @@ function beatTrack(x, sr) {
     r *= w; if (r > bestR) { bestR = r; bestLag = lag; }
   }
   if (!bestLag) return { bpm: 0, beats: [], bars: [] };
-  // verfijning met parabolische interpolatie van de lag
   const rr = l => { let r = 0; for (let f = l; f < nF; f++) r += env[f] * env[f - l]; return r; };
+  // octaaffout: achtste noten geven een dubbel tempo; als de dubbele lag bijna even sterk is en het tempo hoog, neem de helft
+  const bpmOf = l => 60 * fps / l;
+  if (bpmOf(bestLag) > 120 && 2 * bestLag <= nF / 4 && rr(2 * bestLag) >= 0.75 * rr(bestLag)) bestLag *= 2;
+  else if (bpmOf(bestLag) < 62 && rr(Math.round(bestLag / 2)) >= 0.9 * rr(bestLag)) bestLag = Math.round(bestLag / 2);
+  // verfijning met parabolische interpolatie van de lag
   const a = rr(bestLag - 1), b = rr(bestLag), c = rr(bestLag + 1), den = a - 2 * b + c;
   const period = bestLag + (den !== 0 ? 0.5 * (a - c) / den : 0);
   let bestOff = 0, bestS = -1;
