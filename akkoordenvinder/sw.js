@@ -1,5 +1,5 @@
 /* Service worker: maakt de app offline bruikbaar. Verhoog VERSION bij elke wijziging. */
-const VERSION = 'akkoordenvinder-v9';
+const VERSION = 'akkoordenvinder-v10';
 const FILES = [
   './', './index.html', './style.css', './manifest.webmanifest',
   './js/id3.js', './js/dsp.js', './js/worker.js', './js/instruments.js', './js/lyrics.js', './js/app.js', './js/live.js', './js/lyricsui.js', './js/library.js',

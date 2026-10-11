@@ -53,6 +53,19 @@ De microfoon werkt alleen via https (GitHub Pages is dat) en vraagt de eerste ke
 | `sw.js` | Service worker (offline) |
 | `manifest.webmanifest`, `icons/` | App-installatie |
 
+## Hoe goed is de herkenning? (gemeten)
+
+Gemeten met `..\akkoordenvinder-ijkbank\` (bench.html: gegenereerde liedjes met bekende akkoorden; real.html: GuitarSet, echte akoestische gitaaropnames met annotaties, CC-BY 4.0):
+
+| Set | Akkoord goed (maj/min) | Exact type | Wisselmoment |
+| --- | --- | --- | --- |
+| Gegenereerd (12 liedjes, bas+drums+melodie) | 92% | 83% | 0,16 s |
+| GuitarSet rock / singer-songwriter | 78% / 74% | | |
+| GuitarSet bossanova / jazz / funk | 61% / 80% / 40% | | |
+| GuitarSet alle stijlen (controleset, 36 fragmenten) | 62% | 54% | 0,26 s |
+
+Grootste foutbronnen op echt geluid: maj7-akkoorden gehoord als het mineurakkoord erbovenop (Cmaj7 → Em), verwarring met de kwint, en parallelle mineur. Correcties in de app (akkoord ingedrukt houden) zijn de snelste weg naar een kloppend blad; "Kopieer als tekst" geeft de lijst tijd + akkoord die als ijkpunt kan dienen.
+
 ## Goed om te weten
 
 - Bij "Songtekst automatisch zoeken" worden alleen artiest en titel naar lrclib.net gestuurd (en bij YouTube de videolink naar noembed.com om de titel op te halen). Het geluid blijft op het apparaat. Uitzetten kan in Instellingen.
