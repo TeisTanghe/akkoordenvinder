@@ -1,5 +1,5 @@
 /* Service worker: maakt de app offline bruikbaar. Verhoog VERSION bij elke wijziging. */
-const VERSION = 'akkoordenvinder-v6';
+const VERSION = 'akkoordenvinder-v7';
 const FILES = [
   './', './index.html', './style.css', './manifest.webmanifest',
   './js/id3.js', './js/dsp.js', './js/instruments.js', './js/lyrics.js', './js/app.js', './js/live.js', './js/lyricsui.js', './js/library.js',
@@ -15,6 +15,10 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return; // YouTube, fonts enz. gaan gewoon naar het net
+  if (e.request.mode === 'navigate') { // de pagina zelf: eerst het net (nieuwe versie), anders de cache (offline)
+    e.respondWith(fetch(e.request).then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); return res; }).catch(() => caches.match(e.request).then(h => h || caches.match('./index.html'))));
+    return;
+  }
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
       const copy = res.clone();

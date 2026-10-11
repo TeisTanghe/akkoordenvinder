@@ -128,7 +128,7 @@
       </div>
       <p class="prog" id="prog"></p>
       <div class="cards" id="cards"></div>
-      <p class="legend">Tik op een akkoord om daarheen te springen. Gestippelde rand = de herkenning twijfelt. N.C. = geen akkoord. Romeinse cijfers geven de trap in de toonsoort.</p>
+      <p class="legend">Tik op een akkoord om daarheen te springen (lang indrukken of rechtsklikken toont de greep). Gestippelde rand = de herkenning twijfelt. N.C. = geen akkoord. Romeinse cijfers geven de trap in de toonsoort.</p>
       <h3>Alle grepen</h3>
       <p class="hint" id="capoNote" hidden></p>
       <div class="shapes" id="shapes"></div>
@@ -235,6 +235,12 @@
   </div>
 </main>
 
+<div class="popback" id="popBack" hidden></div>
+<div class="chordpop" id="chordPop" hidden role="dialog" aria-label="Zo speel je dit akkoord">
+  <div class="pophead"><h2 id="popName">C</h2><button id="popClose" class="btn small">Sluiten</button></div>
+  <div class="popgrid" id="popGrid"></div>
+  <p class="hint">Tik op een akkoord in de tekst, op het grote akkoord in de speler, of op een greep in "Alle grepen" om dit te openen.</p>
+</div>
 <audio id="audio" preload="auto"></audio>
 <div class="drop" id="drop" hidden>Laat los om te analyseren</div>
 

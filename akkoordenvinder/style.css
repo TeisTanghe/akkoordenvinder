@@ -205,6 +205,17 @@ textarea { width: 100%; min-height: 200px; border: 1px solid var(--line); backgr
 .ly-text { color: var(--ink); }
 .ly-empty { color: var(--muted); font-family: var(--font-body); padding: 10px 0; }
 
+.popback { position: fixed; inset: 0; background: rgb(0 0 0 / .55); z-index: 20; }
+.chordpop { position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); width: min(100%, 560px); max-height: 85vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 21; display: grid; gap: 14px; }
+.pophead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pophead h2 { font-size: 2rem; font-weight: 800; }
+.popgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 10px; }
+.popgrid .shape { gap: 6px; }
+.popgrid .shape svg { max-width: 220px; }
+.popgrid .shape svg[aria-label^="Greep"] { max-width: 110px; }
+.nowMain { cursor: pointer; }
+.shape { cursor: pointer; }
+.ly-chords b { cursor: pointer; }
 .drop { position: fixed; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 85%, transparent); font-family: var(--font-display); font-size: 1.8rem; font-weight: 800; border: 3px dashed var(--accent); z-index: 10; pointer-events: none; }
 
 @media (min-width: 760px) {
