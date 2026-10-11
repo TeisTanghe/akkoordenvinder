@@ -14,11 +14,12 @@ const els = {};
 
 const state = {
   mode: 'file', feat: null, key: null, tuning: 0, duration: 0, segments: [], file: null,
-  detail: 'basic', stability: 1.6, transpose: 0, capo: 0, instrument: 'guitar',
-  audioURL: null, activeIdx: -1, busy: false, liveTime: 0, syncing: false
+  detail: 'basic', stability: 1.0, transpose: 0, capo: 0, instrument: 'guitar',
+  audioURL: null, activeIdx: -1, busy: false, liveTime: 0, syncing: false,
+  fileBlob: null, songId: null, savedName: null, savedAt: null, ytUrl: null, autosave: false, autoLyrics: true
 };
-try { const s = JSON.parse(localStorage.getItem('av-settings') || '{}'); Object.assign(state, { detail: s.detail || 'basic', instrument: s.instrument || 'guitar', stability: s.stability || 1.6 }); } catch {}
-function saveSettings() { try { localStorage.setItem('av-settings', JSON.stringify({ detail: state.detail, instrument: state.instrument, stability: state.stability })); } catch {} }
+try { const s = JSON.parse(localStorage.getItem('av-settings') || '{}'); Object.assign(state, { detail: s.detail || 'basic', instrument: s.instrument || 'guitar', stability: s.stability || 1.0, autosave: !!s.autosave, autoLyrics: s.autoLyrics !== false }); } catch {}
+function saveSettings() { try { localStorage.setItem('av-settings', JSON.stringify({ detail: state.detail, instrument: state.instrument, stability: state.stability, autosave: state.autosave, autoLyrics: state.autoLyrics })); } catch {} }
 
 const tickFns = [];
 const onTick = fn => tickFns.push(fn);
@@ -194,6 +195,7 @@ document.querySelectorAll('.tabs [role="tab"]').forEach(b => b.addEventListener(
 /* ---------- live-invoer (aangeroepen vanuit live.js) ---------- */
 function liveReset(label) {
   state.segments = []; state.key = null; state.feat = null; state.liveTime = 0; state.activeIdx = -1;
+  state.songId = null; state.savedName = null; state.savedAt = null;
   els.srcBadge.textContent = 'Live'; els.trackName.textContent = label;
   renderAll();
 }
@@ -226,6 +228,16 @@ els.trDown.addEventListener('click', () => { state.transpose = Math.max(-11, sta
 els.trUp.addEventListener('click', () => { state.transpose = Math.min(11, state.transpose + 1); renderAll(); });
 els.capo.innerHTML = Array.from({ length: 10 }, (_, i) => `<option value="${i}">${i === 0 ? 'Geen' : 'Fret ' + i}</option>`).join('');
 els.capo.addEventListener('change', () => { state.capo = +els.capo.value; renderAll(); });
+const autoOff = $('autoOff'), autoOn = $('autoOn');
+function setAutosave(on) { state.autosave = on; saveSettings(); autoOff.setAttribute('aria-pressed', !on); autoOn.setAttribute('aria-pressed', on); }
+autoOff.addEventListener('click', () => setAutosave(false));
+autoOn.addEventListener('click', () => setAutosave(true));
+setAutosave(state.autosave);
+const lyrOff = $('lyrOff'), lyrOn = $('lyrOn');
+function setAutoLyrics(on) { state.autoLyrics = on; saveSettings(); lyrOff.setAttribute('aria-pressed', !on); lyrOn.setAttribute('aria-pressed', on); }
+lyrOff.addEventListener('click', () => setAutoLyrics(false));
+lyrOn.addEventListener('click', () => setAutoLyrics(true));
+setAutoLyrics(state.autoLyrics);
 els.instruments.addEventListener('click', e => {
   const b = e.target.closest('[data-ins]'); if (!b) return;
   state.instrument = b.dataset.ins; saveSettings(); renderAll();
@@ -275,6 +287,26 @@ async function analyseBuffer(buf, name) {
   renderAll();
   setStatus('');
   document.dispatchEvent(new CustomEvent('av:track', { detail: name }));
+  if (name) document.dispatchEvent(new CustomEvent('av:analysed', { detail: name }));
+}
+/* opgeslagen liedje openen zonder opnieuw te analyseren */
+async function loadRecord(meta, blob) {
+  els.audio.pause();
+  state.songId = meta.id; state.transpose = 0; state.meta = {};
+  if (meta.kind === 'file' && blob) {
+    if (state.audioURL) URL.revokeObjectURL(state.audioURL);
+    state.audioURL = URL.createObjectURL(blob); els.audio.src = state.audioURL; state.fileBlob = blob;
+    state.file = { feat: meta.feat, key: meta.key, segments: meta.segments, duration: meta.duration, name: meta.name };
+    if (state.mode !== 'file') setMode('file'); else { Object.assign(state, state.file); renderAll(); }
+    els.srcBadge.textContent = 'Opgeslagen'; els.trackName.textContent = meta.name;
+  } else {
+    setMode(meta.ytUrl ? 'youtube' : 'live');
+    state.segments = meta.segments; state.key = meta.key; state.liveTime = meta.duration; state.ytUrl = meta.ytUrl;
+    els.srcBadge.textContent = 'Opgeslagen'; els.trackName.textContent = meta.name;
+    renderAll();
+    if (meta.ytUrl) document.dispatchEvent(new CustomEvent('av:open-yt', { detail: meta.ytUrl }));
+  }
+  document.dispatchEvent(new CustomEvent('av:track', { detail: meta.name }));
 }
 async function loadFile(file) {
   if (!file || state.busy) return;
@@ -282,13 +314,15 @@ async function loadFile(file) {
   if (state.mode !== 'file') setMode('file');
   try {
     setStatus('Bestand lezen…', 0.02);
-    const buf = await decode(await file.arrayBuffer());
+    const ab = await file.arrayBuffer();
+    try { state.meta = window.ID3 ? window.ID3.read(ab) : {}; } catch { state.meta = {}; }
+    const buf = await decode(ab);
     if (state.audioURL) URL.revokeObjectURL(state.audioURL);
     state.audioURL = URL.createObjectURL(file);
     els.audio.src = state.audioURL;
     const name = file.name.replace(/\.[^.]+$/, '');
     els.srcBadge.textContent = 'Jouw liedje'; els.trackName.textContent = name;
-    state.transpose = 0;
+    state.transpose = 0; state.fileBlob = file; state.songId = null; state.savedName = null; state.savedAt = null;
     await analyseBuffer(buf, name);
   } catch (e) {
     console.error(e);
@@ -356,5 +390,5 @@ renderInstruments(); renderFacts();
 loadDemo();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
-return { state, els, view, nameOf, romanOf, fmt, now, onTick, seek, setMode, setStatus, copyText, renderAll, liveReset, liveChord, liveKey, liveTick };
+return { state, els, view, nameOf, romanOf, fmt, now, onTick, seek, setMode, setStatus, copyText, renderAll, loadRecord, liveReset, liveChord, liveKey, liveTick };
 })();

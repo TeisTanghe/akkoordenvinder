@@ -95,8 +95,17 @@ form.addEventListener('submit', e => {
   ui.youtube.start.hidden = false;
   ui.youtube.tab.hidden = !(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) || /Android|iPhone|iPad/i.test(navigator.userAgent);
   try { localStorage.setItem('av-yt', input.value.trim()); } catch {}
-  App.els.trackName.textContent = 'YouTube ' + id;
+  App.state.ytUrl = input.value.trim();
+  if (!App.state.songId) App.els.trackName.textContent = 'YouTube ' + id;
+  // titel van de video ophalen (oEmbed via noembed.com, dat CORS toestaat) voor de songtekst-zoekopdracht
+  fetch('https://noembed.com/embed?url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id))
+    .then(r => r.json()).then(j => {
+      if (!j || !j.title) return;
+      if (!App.state.songId) App.els.trackName.textContent = j.title;
+      document.dispatchEvent(new CustomEvent('av:title', { detail: j.title }));
+    }).catch(() => {});
 });
+document.addEventListener('av:open-yt', e => { input.value = e.detail; form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event('submit', { cancelable: true })); });
 ui.youtube.start.addEventListener('click', () => start('mic', 'youtube', 'YouTube via microfoon'));
 ui.youtube.tab.addEventListener('click', () => start('tab', 'youtube', 'YouTube via tabblad-audio'));
 ui.youtube.stop.addEventListener('click', stop);
