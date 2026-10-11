@@ -101,6 +101,7 @@
       <span class="mono" id="time">0:00 / 0:00</span>
       <div class="facts">
         <span>Toonsoort <b id="keyName">–</b></span>
+        <span>Tempo <b id="bpm" class="mono">–</b></span>
         <span>Stemming <b id="tuning" class="mono">–</b></span>
       </div>
     </div>
@@ -138,6 +139,7 @@
       <div class="phead">
         <h2>Songtekst</h2>
         <div class="row">
+          <button id="lyPlay" class="btn primary small">Speelstand</button>
           <button id="lyEdit" class="btn small">Tekst bewerken</button>
           <button id="lySync" class="btn small" hidden>Synchroniseren</button>
           <button id="lyCopy" class="btn small" hidden>Kopieer</button>
@@ -182,10 +184,12 @@
       <h2>Instellingen</h2>
       <div class="field">
         <span class="lbl">Akkoordtypes</span>
-        <div class="seg-ctl" role="group" aria-label="Akkoordtypes">
+        <div class="seg-ctl three" role="group" aria-label="Akkoordtypes">
           <button id="detBasic" aria-pressed="true">Majeur &amp; mineur</button>
-          <button id="detExt" aria-pressed="false">Ook septiem (7, m7)</button>
+          <button id="detExt" aria-pressed="false">+ septiem</button>
+          <button id="detFull" aria-pressed="false">+ sus, dim, maj7</button>
         </div>
+        <p class="hint">Meer types = preciezer bij jazz of ballads, maar bij simpele liedjes soms onnodig ingewikkeld. Basnoten (bijv. C/E) worden altijd herkend.</p>
       </div>
       <div class="field">
         <span class="lbl">Songtekst automatisch zoeken</span>
@@ -239,7 +243,29 @@
 <div class="chordpop" id="chordPop" hidden role="dialog" aria-label="Zo speel je dit akkoord">
   <div class="pophead"><h2 id="popName">C</h2><button id="popClose" class="btn small">Sluiten</button></div>
   <div class="popgrid" id="popGrid"></div>
-  <p class="hint">Tik op een akkoord in de tekst, op het grote akkoord in de speler, of op een greep in "Alle grepen" om dit te openen.</p>
+  <div class="popedit" id="popEdit" hidden>
+    <span class="lbl">Klopt het niet? Pas aan</span>
+    <div class="row">
+      <select id="edRoot" aria-label="Grondtoon"></select>
+      <select id="edQual" aria-label="Akkoordtype"></select>
+      <button class="btn primary small" data-edit="set">Toepassen</button>
+    </div>
+    <div class="row">
+      <button class="btn small" data-edit="prev">Samenvoegen met vorige</button>
+      <button class="btn small" data-edit="next">Samenvoegen met volgende</button>
+      <button class="btn small" data-edit="earlier">Begin −0,2 s</button>
+      <button class="btn small" data-edit="later">Begin +0,2 s</button>
+      <button class="btn small" data-edit="nc">Geen akkoord</button>
+    </div>
+    <p class="hint">Correcties worden bij dit liedje bewaard (ook als je het opslaat).</p>
+  </div>
+  <p class="hint">Tik op een akkoord in de tekst, op het grote akkoord in de speler, of houd een akkoord in het schema ingedrukt om dit te openen.</p>
+</div>
+<div class="playbar" id="playBar" hidden>
+  <button id="playToggle" class="btn primary" aria-label="Afspelen of pauzeren">▶</button>
+  <span id="playTime" class="mono">0:00</span>
+  <button id="playAuto" class="btn small">Autoscroll</button>
+  <button id="playExit" class="btn small">Sluit speelstand</button>
 </div>
 <audio id="audio" preload="auto"></audio>
 <div class="drop" id="drop" hidden>Laat los om te analyseren</div>

@@ -216,6 +216,18 @@ textarea { width: 100%; min-height: 200px; border: 1px solid var(--line); backgr
 .nowMain { cursor: pointer; }
 .shape { cursor: pointer; }
 .ly-chords b { cursor: pointer; }
+.seg-ctl.three { grid-template-columns: 1fr 1fr 1fr; }
+.popedit { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.popedit select { width: auto; flex: 1; min-width: 90px; }
+/* speelstand: alleen het blad, groot, met zwevende balk */
+body.playmode .appbar, body.playmode .source, body.playmode .status, body.playmode .deck, body.playmode .tabs,
+body.playmode .panel:not([data-tab="lyrics"]), body.playmode .panel[data-tab="lyrics"] .phead, body.playmode .lyfind,
+body.playmode #lyFindStatus, body.playmode #lyEditor, body.playmode #lySyncBar, body.playmode .lytools, body.playmode .panel[data-tab="lyrics"] .legend { display: none !important; }
+body.playmode .panel[data-tab="lyrics"] { display: grid !important; border: none; background: transparent; padding: 8px 0 100px; }
+body.playmode .sheet { font-size: 1.3rem; line-height: 1.4; }
+body.playmode .ly-line { padding: 4px 8px; }
+.playbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; display: flex; align-items: center; gap: 10px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px)); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(10px); border-top: 1px solid var(--line); }
+.playbar .mono { flex: 1; }
 .drop { position: fixed; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 85%, transparent); font-family: var(--font-display); font-size: 1.8rem; font-weight: 800; border: 3px dashed var(--accent); z-index: 10; pointer-events: none; }
 
 @media (min-width: 760px) {
