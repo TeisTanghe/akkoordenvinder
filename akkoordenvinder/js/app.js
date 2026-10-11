@@ -14,11 +14,11 @@ const els = {};
 
 const state = {
   mode: 'file', feat: null, key: null, tuning: 0, duration: 0, segments: [], file: null,
-  detail: 'basic', stability: 1.0, transpose: 0, capo: 0, instrument: 'guitar',
+  detail: 'ext', stability: 0.8, transpose: 0, capo: 0, instrument: 'guitar',
   audioURL: null, activeIdx: -1, busy: false, liveTime: 0, syncing: false,
   fileBlob: null, songId: null, savedName: null, savedAt: null, ytUrl: null, autosave: false, autoLyrics: true
 };
-try { const s = JSON.parse(localStorage.getItem('av-settings') || '{}'); Object.assign(state, { detail: s.detail || 'basic', instrument: s.instrument || 'guitar', stability: s.stability || 1.0, autosave: !!s.autosave, autoLyrics: s.autoLyrics !== false }); } catch {}
+try { const s = JSON.parse(localStorage.getItem('av-settings') || '{}'); Object.assign(state, { detail: s.detail || 'ext', instrument: s.instrument || 'guitar', stability: s.stability || 0.8, autosave: !!s.autosave, autoLyrics: s.autoLyrics !== false }); } catch {}
 function saveSettings() { try { localStorage.setItem('av-settings', JSON.stringify({ detail: state.detail, instrument: state.instrument, stability: state.stability, autosave: state.autosave, autoLyrics: state.autoLyrics })); } catch {} }
 
 const tickFns = [];
