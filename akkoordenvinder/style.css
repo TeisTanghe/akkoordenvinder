@@ -85,7 +85,21 @@ a { color: var(--accent); }
 /* ---------- speler ---------- */
 .deck { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: grid; gap: 14px; }
 .track { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--muted); font-size: .9rem; }
-.track span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.track .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.track .btn { flex: none; margin-left: auto; }
+
+/* ---------- bibliotheek ---------- */
+.library { display: grid; gap: 10px; }
+.library h2 .count { font-size: .8rem; color: var(--muted); font-weight: 600; margin-left: 6px; }
+.libList { display: grid; gap: 6px; }
+.libItem { display: flex; align-items: stretch; gap: 6px; }
+.libOpen { flex: 1; min-width: 0; text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 10px 12px; cursor: pointer; display: grid; gap: 3px; color: var(--ink); }
+.libOpen:hover { border-color: var(--muted); }
+.libItem.on .libOpen { border-color: var(--accent); }
+.libName { font-family: var(--font-display); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.libMeta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: .78rem; color: var(--muted); align-items: center; }
+.libDel { flex: none; border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 12px; padding: 0 12px; cursor: pointer; font-size: .82rem; }
+.libDel:hover { color: var(--warn); border-color: var(--warn); }
 .badge { font-size: .68rem; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; border: 1px solid var(--line); padding: 2px 8px; border-radius: 999px; flex: none; }
 .now { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 12px; }
 .nowMain, .nowNext { display: grid; align-content: start; gap: 2px; padding: 14px 16px; border-radius: var(--r); min-width: 0; }
@@ -167,15 +181,26 @@ select { width: 100%; height: 40px; border: 1px solid var(--line); border-radius
 
 /* ---------- songtekst ---------- */
 textarea { width: 100%; min-height: 200px; border: 1px solid var(--line); background: var(--surface-2); border-radius: 12px; padding: 12px; resize: vertical; font-family: var(--font-mono); font-size: .9rem; line-height: 1.5; }
+.lyfind { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 8px; align-items: center; }
+.lyfind input[type="text"] { min-width: 0; height: 40px; border: 1px solid var(--line); background: var(--surface-2); border-radius: 999px; padding: 0 14px; }
+.lyfile { position: relative; overflow: hidden; }
+.lyfile input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+@media (max-width: 640px) { .lyfind { grid-template-columns: 1fr 1fr; } }
 .syncbar { display: grid; gap: 10px; padding: 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
 .sheet { font-family: var(--font-mono); font-size: .92rem; line-height: 1.35; overflow-x: auto; display: grid; gap: 2px; }
 .ly-gap { height: 14px; }
 .ly-line { display: grid; padding: 2px 8px; border-radius: 8px; white-space: pre; cursor: pointer; }
 .ly-line.active { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
 .ly-line.unsynced .ly-text { color: var(--muted); }
-.ly-chords { color: var(--accent); font-weight: 700; min-height: 1.2em; }
-.ly-chords.empty { min-height: 0; }
-.ly-chords b { font-weight: 700; }
+.ly-chords { color: var(--ink); font-weight: 700; min-height: 1.2em; }
+.ly-chords b { font-weight: 700; background: var(--line); color: var(--ink); border-radius: 4px; padding: 0 .35ch; margin: 0 -.35ch; }
+.sheet.nochords .ly-chords { display: none; }
+.ly-section { font-family: var(--font-body); font-weight: 700; color: var(--muted); margin-top: 8px; padding: 2px 8px; white-space: pre-wrap; }
+.lytools { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: 12px; }
+.lytools .tool { border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); border-radius: 8px; min-width: 34px; height: 34px; padding: 0 10px; cursor: pointer; font-weight: 600; font-size: .86rem; }
+.lytools .tool[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.lytools .sep { width: 1px; height: 22px; background: var(--line); margin: 0 2px; }
+.lytools output { min-width: 2.4ch; text-align: center; }
 .ly-text { color: var(--ink); }
 .ly-empty { color: var(--muted); font-family: var(--font-body); padding: 10px 0; }
 

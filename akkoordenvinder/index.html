@@ -40,6 +40,10 @@
       <span class="hint">mp3, wav, m4a, ogg of flac. Of sleep het hierheen. Blijft op je apparaat.</span>
       <input id="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac">
     </label>
+    <div class="library">
+      <div class="phead"><h2>Opgeslagen liedjes <span class="count" id="libCount"></span></h2></div>
+      <div class="libList" id="libList"></div>
+    </div>
   </section>
 
   <!-- bron: youtube -->
@@ -49,7 +53,7 @@
       <button class="btn primary" type="submit">Laden</button>
     </form>
     <div class="yt" id="ytPlayer" hidden></div>
-    <p class="hint" id="ytHint">YouTube geeft geen toegang tot de audio zelf. Start de video en tik op <b>Luister mee</b>: de app herkent de akkoorden via de microfoon. Zet het geluid lekker hard. Op een computer kun je ook het tabblad-geluid direct laten analyseren, dat is nauwkeuriger.</p>
+    <p class="hint" id="ytHint">YouTube geeft geen toegang tot de audio zelf. Tik op <b>Luister mee</b> en start meteen de video: de app herkent de akkoorden via de microfoon en de opgezochte songtekst loopt dan gelijk. Zet het geluid lekker hard. Op een computer kun je ook het tabblad-geluid direct laten analyseren, dat is nauwkeuriger.</p>
     <div class="row">
       <button class="btn primary" id="ytListen" hidden>Luister mee (microfoon)</button>
       <button class="btn" id="ytTab" hidden>Analyseer tabblad-geluid</button>
@@ -77,7 +81,7 @@
 
   <!-- speler -->
   <section class="deck" aria-label="Speler">
-    <div class="track"><span class="badge" id="srcBadge">Voorbeeld</span><span id="trackName">Gesynthetiseerd fragment</span></div>
+    <div class="track"><span class="badge" id="srcBadge">Voorbeeld</span><span class="name" id="trackName">Gesynthetiseerd fragment</span><button id="saveBtn" class="btn small" hidden>Opslaan</button></div>
     <div class="now">
       <div class="nowMain" id="nowMain">
         <span class="lbl">Nu</span>
@@ -139,14 +143,22 @@
           <button id="lyCopy" class="btn small" hidden>Kopieer</button>
         </div>
       </div>
+      <form class="lyfind" id="lyFind">
+        <input id="lyArtist" type="text" placeholder="Artiest" aria-label="Artiest" autocomplete="off">
+        <input id="lyTitle" type="text" placeholder="Titel" aria-label="Titel" autocomplete="off">
+        <button id="lyFindBtn" class="btn primary small" type="submit">Zoek songtekst</button>
+        <label class="btn small lyfile" for="lyFile">Tekstbestand (.lrc / .txt)<input id="lyFile" type="file" accept=".lrc,.txt,text/plain"></label>
+      </form>
+      <p class="hint" id="lyFindStatus"></p>
       <div id="lyEditor" hidden>
-        <textarea id="lyText" placeholder="Plak hier de songtekst, één regel per zin. Een lege regel maakt een nieuw couplet."></textarea>
+        <textarea id="lyText" placeholder="Plak hier de songtekst, of een compleet akkoordenblad (bijvoorbeeld van Ultimate Guitar). Akkoordregels en kopjes als [Intro] of [Verse 1] worden herkend. Een lege regel maakt een nieuw couplet."></textarea>
         <div class="row" style="margin-top:8px"><button id="lySave" class="btn primary small">Opslaan</button><button id="lyCancel" class="btn small">Annuleren</button></div>
       </div>
       <div id="lySyncBar" class="syncbar" hidden>
         <p class="hint">Speel het liedje af en tik op <b>Nu</b> (of de spatiebalk) op het moment dat de volgende regel begint. Tik op een regel in de tekst om die opnieuw op het huidige moment te zetten.</p>
         <div class="row">
           <button id="lyTap" class="btn primary big">Nu</button>
+          <button id="lyEstimate" class="btn small">Tijden schatten</button>
           <button id="lyUndo" class="btn small">Laatste ongedaan</button>
           <button id="lyReset" class="btn small">Wis tijden</button>
           <button id="lyDone" class="btn small">Klaar</button>
@@ -154,7 +166,16 @@
         <p class="small" id="lyProgress"></p>
       </div>
       <div id="lySheet" class="sheet"></div>
-      <p class="legend">De akkoorden staan boven het woord waar je ze speelt. Regels zonder tijd staan grijs tot je ze hebt gesynchroniseerd. De tekst wordt per liedje op dit apparaat bewaard.</p>
+      <div class="lytools" id="lyTools" hidden>
+        <span class="lbl">Letter</span><button id="lyFontDown" class="tool" aria-label="Kleinere letter">−</button><button id="lyFontUp" class="tool" aria-label="Grotere letter">+</button>
+        <span class="sep"></span>
+        <button id="lyChords" class="tool" aria-pressed="true">Akkoorden</button>
+        <span class="sep"></span>
+        <button id="lyAuto" class="tool" aria-pressed="false">Autoscroll</button><button id="lyAutoDown" class="tool" aria-label="Langzamer">−</button><button id="lyAutoUp" class="tool" aria-label="Sneller">+</button>
+        <span class="sep"></span>
+        <span class="lbl">Transp.</span><button id="lyTrDown" class="tool" aria-label="Halve toon omlaag">−</button><output id="lyTrVal" class="mono">0</output><button id="lyTrUp" class="tool" aria-label="Halve toon omhoog">+</button>
+      </div>
+      <p class="legend">De tekst komt uit het bestand zelf (ID3-tags) of wordt opgezocht via lrclib.net op basis van artiest/titel uit de bestandsnaam ("Artiest - Titel.mp3"). Met tijden per regel staan de herkende akkoorden meteen boven de juiste woorden. Eigen liedjes (bijv. Suno): plak de tekst of laad een .lrc/.txt-bestand, en tik op "Tijden schatten" of tik de regels mee. Alles wordt per liedje op dit apparaat bewaard.</p>
     </section>
 
     <section class="panel" data-tab="settings" hidden>
@@ -167,9 +188,25 @@
         </div>
       </div>
       <div class="field">
+        <span class="lbl">Songtekst automatisch zoeken</span>
+        <div class="seg-ctl" role="group" aria-label="Songtekst automatisch zoeken">
+          <button id="lyrOff" aria-pressed="false">Uit</button>
+          <button id="lyrOn" aria-pressed="true">Aan (via lrclib.net)</button>
+        </div>
+        <p class="hint">Bij "aan" stuurt de app alleen de artiest en titel uit de bestandsnaam naar lrclib.net. Het geluid zelf blijft op je apparaat.</p>
+      </div>
+      <div class="field">
+        <span class="lbl">Automatisch opslaan</span>
+        <div class="seg-ctl" role="group" aria-label="Automatisch opslaan">
+          <button id="autoOff" aria-pressed="true">Uit</button>
+          <button id="autoOn" aria-pressed="false">Aan, elk geladen liedje</button>
+        </div>
+      </div>
+      <div class="field">
         <label class="lbl" for="stab">Wisselsnelheid</label>
-        <input id="stab" type="range" min="0.4" max="4" step="0.1" value="1.6">
+        <input id="stab" type="range" min="0.3" max="4" step="0.1" value="1.0">
         <div class="rangeEnds"><span>Veel wissels</span><span>Rustig</span></div>
+        <p class="hint">Hoor je meer akkoordwissels dan je ziet? Schuif naar links. Springt hij te vaak heen en weer? Schuif naar rechts. Het resultaat wordt meteen herberekend.</p>
       </div>
       <div class="row2">
         <div class="field">
@@ -201,11 +238,13 @@
 <audio id="audio" preload="auto"></audio>
 <div class="drop" id="drop" hidden>Laat los om te analyseren</div>
 
+<script src="js/id3.js"></script>
 <script src="js/dsp.js"></script>
 <script src="js/instruments.js"></script>
 <script src="js/lyrics.js"></script>
 <script src="js/app.js"></script>
 <script src="js/live.js"></script>
 <script src="js/lyricsui.js"></script>
+<script src="js/library.js"></script>
 </body>
 </html>
