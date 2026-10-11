@@ -24,7 +24,12 @@ function load() {
 }
 function save() { try { localStorage.setItem(keyFor(), JSON.stringify({ lines })); } catch {} }
 const rows = () => L.placeChords(lines, App.state.segments, ch => App.nameOf(ch), App.view());
-const nextUnsynced = () => lines.findIndex(l => L.kindOf(l) === 'text' && l.t == null);
+/* volgende regel om te tikken: na de laatst getikte, anders de eerste zonder (vaste) tijd */
+function nextUnsynced() {
+  const last = tapStack.length ? tapStack[tapStack.length - 1] : -1;
+  for (let i = last + 1; i < lines.length; i++) if (L.kindOf(lines[i]) === 'text' && (lines[i].t == null || lines[i].est)) return i;
+  return lines.findIndex(l => L.kindOf(l) === 'text' && (l.t == null || l.est));
+}
 const hasText = () => lines.some(l => L.kindOf(l) !== 'blank');
 
 function applyPrefs() {
@@ -45,8 +50,9 @@ function render() {
   updateProgress();
 }
 function updateProgress() {
-  const all = lines.filter(l => L.kindOf(l) === 'text'), done = all.filter(l => l.t != null).length, n = nextUnsynced();
-  el.progress.textContent = `${done} van ${all.length} regels gezet.` + (n >= 0 ? ` Volgende: "${(lines[n].text || lines[n].manual || '').slice(0, 48)}"` : ' Alle regels staan.');
+  const all = lines.filter(l => L.kindOf(l) === 'text'), fixed = all.filter(l => l.t != null && !l.est).length, est = all.filter(l => l.est).length, n = nextUnsynced();
+  el.progress.textContent = `${fixed} van ${all.length} regels zelf gezet` + (est ? `, ${est} geschat.` : '.') + (n >= 0 ? ` Volgende: "${(lines[n].text || lines[n].manual || '').slice(0, 48)}"` : ' Alle regels staan.');
+  if (!App.state.syncing && est && !el.findStatus.textContent) el.findStatus.textContent = 'De regeltijden zijn geschat aan de hand van de akkoordwissels. Staat een akkoord op het verkeerde woord? Tik op Synchroniseren en tik op die regel op het moment dat hij begint.';
 }
 
 /* regel die nu klinkt oplichten */
@@ -76,7 +82,9 @@ document.addEventListener('av:track', e => {
   if (meta.synced && meta.synced.length) { lines = L.fromEntries(meta.synced); tapStack = []; save(); render(); el.findStatus.textContent = 'Songtekst met tijden uit het bestand zelf gelezen.'; return; }
   if (meta.lyrics) {
     lines = L.parseAny(meta.lyrics); tapStack = []; save(); render();
-    el.findStatus.textContent = lines.some(l => l.t != null) ? 'Songtekst met tijden uit het bestand zelf gelezen.' : 'Songtekst uit het bestand gelezen, zonder tijden. Tik op Synchroniseren en dan op "Tijden schatten" of tik de regels mee.';
+    const timed = lines.some(l => l.t != null);
+    if (!timed) autoEstimate();
+    el.findStatus.textContent = timed ? 'Songtekst met tijden uit het bestand zelf gelezen.' : 'Songtekst uit het bestand gelezen; de regeltijden zijn geschat.';
     return;
   }
   if (App.state.autoLyrics && title) findLyrics(artist, title, true);
@@ -87,29 +95,57 @@ el.file.addEventListener('change', async () => {
   const f = el.file.files[0]; if (!f) return;
   try {
     lines = L.parseAny(await f.text()); tapStack = []; save(); render();
-    el.findStatus.textContent = lines.some(l => l.t != null) ? `Tekst met tijden geladen uit ${f.name}.` : `Tekst geladen uit ${f.name} (zonder tijden). Tik op Synchroniseren en dan "Tijden schatten", of tik de regels mee.`;
+    const timed = lines.some(l => l.t != null);
+    if (!timed) autoEstimate();
+    el.findStatus.textContent = timed ? `Tekst met tijden geladen uit ${f.name}.` : `Tekst geladen uit ${f.name}; de regeltijden zijn geschat.`;
   } catch { el.findStatus.textContent = 'Dit bestand kon niet worden gelezen.'; }
   el.file.value = '';
 });
 
-/* regels zonder tijd gelijkmatig verdelen tussen de bekende tijden (ruwe schatting, daarna bijtikken) */
-function estimateTimes() {
-  const texts = lines.filter(l => L.kindOf(l) === 'text'), n = texts.length; if (!n) return;
-  const segs = App.state.segments, dur = App.state.mode === 'file' ? App.state.duration : App.state.liveTime;
-  const first = segs.find(s => s.chord), last = [...segs].reverse().find(s => s.chord);
-  const start = first ? first.start : 0, end = last ? Math.min(dur, last.end) : dur;
+/* Regeltijden schatten zonder tikken. Zelf getikte regels blijven staan en dienen als ankers; de rest wordt
+   verdeeld naar regellengte (met extra ruimte na een witregel) en vastgeklikt op de dichtstbijzijnde akkoordwissel. */
+function estimateTimes(auto) {
+  const texts = lines.filter(l => L.kindOf(l) === 'text'), n = texts.length; if (!n) return false;
+  const segs = App.state.segments.filter(s => s.chord);
+  const dur = App.state.mode === 'file' ? App.state.duration : App.state.liveTime;
+  if (!segs.length || !dur) return false;
+  // zangstart: meestal als het eerste akkoord na de intro terugkomt, anders het eerste akkoord
+  const first = segs[0];
+  const again = segs.find(s => s.start > first.end + 0.5 && s.chord.root === first.chord.root && s.chord.q === first.chord.q);
+  const start = again && again.start < Math.min(40, dur * 0.25) ? again.start : first.start;
+  const end = Math.max(start + n, Math.min(dur, segs[segs.length - 1].end) - 1);
+  const weight = l => { const k = lines.indexOf(l), prev = lines[k - 1]; return Math.max(10, l.text.length) + (prev && L.kindOf(prev) === 'blank' ? 14 : 0); };
+  const open = l => l.t == null || l.est;
   let i = 0;
   while (i < n) {
-    if (texts[i].t != null) { i++; continue; }
-    let j = i; while (j < n && texts[j].t == null) j++;
-    const t0 = i > 0 ? texts[i - 1].t : start, t1 = j < n ? texts[j].t : end, count = j - i, off = i > 0 ? 1 : 0;
-    for (let k = 0; k < count; k++) texts[i + k].t = t0 + (t1 - t0) * (k + off) / (count + off);
+    if (!open(texts[i])) { i++; continue; }
+    let j = i; while (j < n && open(texts[j])) j++;
+    const items = (i > 0 ? [texts[i - 1]] : []).concat(texts.slice(i, j));
+    const t0 = i > 0 ? texts[i - 1].t : start, t1 = j < n ? texts[j].t : end;
+    const total = items.reduce((a, l) => a + weight(l), 0);
+    let cum = 0;
+    items.forEach((l, idx) => { if (!(i > 0 && idx === 0)) { l.t = t0 + (t1 - t0) * cum / total; l.est = true; } cum += weight(l); });
     i = j;
   }
+  let prevT = -1;
+  texts.forEach((l, k) => {
+    if (l.est) {
+      const next = texts[k + 1], lineDur = next && next.t != null ? Math.max(0.5, next.t - l.t) : 3;
+      const win = Math.min(1.5, Math.max(0.3, lineDur * 0.4));
+      let best = null;
+      for (const s of segs) { const d = Math.abs(s.start - l.t); if (d <= win && (best == null || d < Math.abs(best - l.t))) best = s.start; }
+      if (best != null) l.t = best;
+    }
+    if (l.t != null) { if (l.t < prevT + 0.25) l.t = prevT + 0.25; prevT = l.t; }
+  });
   tapStack = []; save(); render();
-  el.progress.textContent = 'Tijden geschat. Klopt een regel niet? Speel af en tik op die regel op het moment dat hij begint.';
+  if (!auto) el.progress.textContent = 'Tijden opnieuw geschat. Klopt een regel niet? Speel af en tik op die regel op het moment dat hij begint.';
+  return true;
 }
-el.estimate.addEventListener('click', estimateTimes);
+el.estimate.addEventListener('click', () => estimateTimes(false));
+/* meteen na plakken/laden: schatten als er nog geen tijden zijn */
+function autoEstimate() { if (App.state.mode === 'file' && !lines.some(l => l.t != null && !l.est)) return estimateTimes(true); return false; }
+document.addEventListener('av:render', () => { if (hasText() && !lines.some(l => l.t != null) && App.state.segments.length) autoEstimate(); });
 document.addEventListener('av:title', e => {
   const guess = L.guessFromName(e.detail || '');
   if (!guess.title) return;
@@ -136,8 +172,9 @@ async function findLyrics(artist, title, auto) {
     lines = hit.syncedLyrics ? L.parseLRC(hit.syncedLyrics) : L.parse(hit.plainLyrics);
     tapStack = [];
     save(); render();
+    if (!hit.syncedLyrics) autoEstimate();
     const clean = s => String(s || '').split(';')[0].trim();
-    el.findStatus.textContent = `Gevonden: ${clean(hit.artistName)} – ${clean(hit.trackName)}` + (hit.syncedLyrics ? ' (met tijden: de akkoorden staan meteen op hun plek).' : ' (zonder tijden: tik op Synchroniseren om de akkoorden erboven te krijgen).');
+    el.findStatus.textContent = `Gevonden: ${clean(hit.artistName)} – ${clean(hit.trackName)}` + (hit.syncedLyrics ? ' (met tijden per regel).' : ' (zonder tijden; de regeltijden zijn geschat).');
   } catch (e) {
     console.error(e);
     el.findStatus.textContent = 'Zoeken lukte niet (geen verbinding?). Je kunt de tekst ook zelf plakken.';
@@ -150,9 +187,10 @@ el.edit.addEventListener('click', () => { el.text.value = L.toSource(lines); el.
 el.cancel.addEventListener('click', () => el.editor.hidden = true);
 el.save.addEventListener('click', () => {
   const fresh = L.parse(el.text.value);
-  fresh.forEach((l, i) => { const old = lines[i]; if (old && old.text === l.text) l.t = old.t; });
+  fresh.forEach((l, i) => { const old = lines[i]; if (old && old.text === l.text) { l.t = old.t; l.est = old.est; } });
   lines = fresh; tapStack = [];
   el.editor.hidden = true; save(); render();
+  autoEstimate();
 });
 
 /* synchroniseren */
@@ -166,12 +204,12 @@ el.done.addEventListener('click', () => setSyncing(false));
 function tap() {
   const i = nextUnsynced(); if (i < 0) { updateProgress(); return; }
   if (App.state.mode === 'file' && App.els.audio.paused) App.els.audio.play().catch(() => {});
-  lines[i].t = App.now(); tapStack.push(i);
+  lines[i].t = App.now(); lines[i].est = false; tapStack.push(i);
   save(); render();
 }
 el.tap.addEventListener('click', tap);
 el.undo.addEventListener('click', () => { const i = tapStack.pop(); if (i != null) { lines[i].t = null; save(); render(); } });
-el.reset.addEventListener('click', () => { lines.forEach(l => l.t = null); tapStack = []; save(); render(); });
+el.reset.addEventListener('click', () => { lines.forEach(l => { l.t = null; l.est = false; }); tapStack = []; save(); render(); });
 document.addEventListener('keydown', e => {
   if (!App.state.syncing || e.code !== 'Space' || e.target.closest('input, textarea, select')) return;
   e.preventDefault(); tap();
@@ -179,7 +217,7 @@ document.addEventListener('keydown', e => {
 el.sheet.addEventListener('click', e => {
   const n = e.target.closest('.ly-line'); if (!n) return;
   const i = +n.dataset.idx, line = lines[i]; if (!line) return;
-  if (App.state.syncing) { line.t = App.now(); tapStack.push(i); save(); render(); }
+  if (App.state.syncing) { line.t = App.now(); line.est = false; tapStack.push(i); save(); render(); }
   else if (line.t != null && App.state.mode === 'file') App.seek(line.t);
 });
 el.copy.addEventListener('click', () => App.copyText(L.toText(rows()), el.copy, 'Kopieer'));

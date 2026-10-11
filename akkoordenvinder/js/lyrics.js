@@ -101,7 +101,7 @@ function placeChords(lines, segments, nameFn, { shift = 0, flats = false } = {})
     }
     let row = '', cursor = 0;
     for (const c of cells) { const at = Math.max(c.at, cursor); row += ' '.repeat(at - row.length) + c.name; cursor = row.length + 1; }
-    return { idx, kind, text: line.text, chordRow: row, t: t0 };
+    return { idx, kind, text: line.text, chordRow: row, t: t0, est: !!line.est };
   });
 }
 
@@ -112,7 +112,7 @@ function renderHTML(rows, activeIdx) {
   return rows.map(r => {
     if (r.kind === 'blank') return '<div class="ly-gap"></div>';
     if (r.kind === 'section') return `<div class="ly-section">${escape(r.text)}</div>`;
-    const cls = ['ly-line', r.t == null && !r.manual ? 'unsynced' : '', r.idx === activeIdx ? 'active' : ''].join(' ');
+    const cls = ['ly-line', r.t == null && !r.manual ? 'unsynced' : '', r.est ? 'est' : '', r.idx === activeIdx ? 'active' : ''].join(' ');
     const chords = r.chordRow ? `<div class="ly-chords">${escape(r.chordRow).replace(/(\S+)/g, '<b>$1</b>')}</div>` : '';
     const text = r.text ? `<div class="ly-text">${escape(r.text)}</div>` : '';
     return `<div class="${cls}" data-idx="${r.idx}">${chords}${text}</div>`;
