@@ -104,7 +104,8 @@ el.file.addEventListener('change', async () => {
 
 /* Regeltijden schatten zonder tikken. Zelf getikte regels blijven staan en dienen als ankers; de rest wordt
    verdeeld naar regellengte (met extra ruimte na een witregel) en vastgeklikt op de dichtstbijzijnde akkoordwissel. */
-const SYL = l => { const w = (l.text || '').toLowerCase().match(/[a-zà-ÿ']+/g) || []; return Math.max(1, w.reduce((a, x) => a + Math.max(1, (x.match(/[aeiouyáéíóúàèëïöüâêîôû]+/g) || []).length), 0)); };
+const FUNC = new Set(['de', 'het', 'een', 'en', 'of', 'in', 'op', 'te', 'ik', 'je', 'jij', 'we', 'ze', 'is', 'er', 'me', 'mij', 'aan', 'als', 'dat', 'die', 'dit', 'the', 'a', 'an', 'and', 'of', 'to', 'in', 'on', 'i', 'you', 'it', 'is', 'my', 'me', 'we', 'so', 'do']);
+const SYL = l => { const w = (l.text || '').toLowerCase().match(/[a-zà-ÿ']+/g) || []; return Math.max(1, w.reduce((a, x) => a + Math.max(1, (x.match(/[aeiouyáéíóúàèëïöüâêîôû]+/g) || []).length) * (FUNC.has(x) ? 0.6 : 1), 0)); };
 function estimateTimes(auto) {
   const texts = lines.filter(l => L.kindOf(l) === 'text'), n = texts.length; if (!n) return false;
   const segs = App.state.segments.filter(s => s.chord);
@@ -158,14 +159,18 @@ function estimateDP(texts, segs, F, vStart, vEnd, auto) {
   const add = (t, chord) => { const key = Math.round(t * 10); if (!cand.has(key) || chord) cand.set(key, { t, chord }); };
   for (const s of segs) add(s.start, true);
   for (const f of F.vocalOnsets || []) add(frameT(f), false);
+  for (const b of F.beats || []) if (b >= vStart - 1 && b <= vEnd + 1) add(b, false);
   for (const t of fixed) if (t != null) add(t, false);
-  const C = [...cand.values()].sort((a, b) => a.t - b.t).map(c => ({ ...c, v: vocalAt(c.t) }));
+  const changes = segs.map(s => s.start);
+  const chordJustBefore = t => changes.some(c => c <= t && t - c <= 0.3);
+  const C = [...cand.values()].sort((a, b) => a.t - b.t).map(c => ({ ...c, v: vocalAt(c.t), near: chordJustBefore(c.t) }));
   const m = C.length; if (!m) return false;
+  const beat = F.bpm ? 60 / F.bpm : 0.5;
   const totalSyl = texts.reduce((a, l) => a + SYL(l) + (gapBefore(l) ? 4 : 0), 0);
   const sps = Math.max(0.12, Math.min(0.7, (vEnd - vStart) / totalSyl));
   const expDur = texts.map((l, i) => SYL(l) * sps + (i + 1 < n && gapBefore(texts[i + 1]) ? 4 * sps : 0));
   const INF = 1e9, cost = new Float64Array(n * m).fill(INF), back = new Int32Array(n * m).fill(-1);
-  const unit = (i, j) => { if (fixed[i] != null) return Math.abs(C[j].t - fixed[i]) < 0.06 ? -20 : INF; return (1 - C[j].v) * 2.5 + (C[j].chord ? 0 : 0.5); };
+  const unit = (i, j) => { if (fixed[i] != null) return Math.abs(C[j].t - fixed[i]) < 0.06 ? -20 : INF; return (1 - C[j].v) * 2.5 + (C[j].chord ? 0 : C[j].near ? 0.15 : 0.5); };
   for (let j = 0; j < m; j++) cost[j] = unit(0, j) + Math.abs(C[j].t - vStart) / Math.max(1, 6 * sps);
   for (let i = 1; i < n; i++) {
     const e = Math.max(0.5, expDur[i - 1]);
@@ -175,7 +180,7 @@ function estimateDP(texts, segs, F, vStart, vEnd, auto) {
       for (let k = j - 1; k >= 0; k--) {
         const dt = C[j].t - C[k].t; if (dt < 0.3) continue; if (dt > 4 * e + 6) break;
         if (cost[(i - 1) * m + k] >= INF) continue;
-        const c = cost[(i - 1) * m + k] + Math.abs(dt - e) / e;
+        const c = cost[(i - 1) * m + k] + Math.abs(dt - e) / e + (dt < beat ? 1.5 : 0) + (dt > 16 * beat ? 1 : 0);
         if (c < best) { best = c; bk = k; }
       }
       if (bk >= 0) { cost[i * m + j] = best + u; back[i * m + j] = bk; }
@@ -261,12 +266,28 @@ document.addEventListener('keydown', e => {
   if (!App.state.syncing || e.code !== 'Space' || e.target.closest('input, textarea, select')) return;
   e.preventDefault(); tap();
 });
+/* tikken: akkoord = greep tonen, regel = springen (of in sync-modus: regel begint nu). Lang indrukken: regel begint nu. */
+let pressT = 0, pressed = false;
+function setLineNow(i) {
+  const line = lines[i]; if (!line) return;
+  line.t = App.now(); line.est = false; tapStack.push(i); save(); render();
+  el.findStatus.textContent = `Regel vastgezet op ${App.fmt(line.t)}. Andere geschatte regels zijn meegeschoven.`;
+  estimateTimes(true);
+}
+el.sheet.addEventListener('pointerdown', e => {
+  const n = e.target.closest('.ly-line'); if (!n) return;
+  pressed = false; clearTimeout(pressT);
+  pressT = setTimeout(() => { pressed = true; if (navigator.vibrate) navigator.vibrate(30); setLineNow(+n.dataset.idx); }, 550);
+});
+['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => el.sheet.addEventListener(ev, () => clearTimeout(pressT)));
+el.sheet.addEventListener('contextmenu', e => { if (e.target.closest('.ly-line')) e.preventDefault(); });
 el.sheet.addEventListener('click', e => {
+  if (pressed) { pressed = false; return; }
   const badge = e.target.closest('.ly-chords b');
   if (badge) { App.showChordByName(badge.textContent.trim()); return; }
   const n = e.target.closest('.ly-line'); if (!n) return;
   const i = +n.dataset.idx, line = lines[i]; if (!line) return;
-  if (App.state.syncing) { line.t = App.now(); line.est = false; tapStack.push(i); save(); render(); }
+  if (App.state.syncing) setLineNow(i);
   else if (line.t != null && App.state.mode === 'file') App.seek(line.t);
 });
 el.copy.addEventListener('click', () => App.copyText(L.toText(rows()), el.copy, 'Kopieer'));
@@ -297,6 +318,22 @@ el.autoUp.addEventListener('click', () => { autoSpeed = Math.min(6, autoSpeed + 
 el.trDown.addEventListener('click', () => { App.state.transpose = Math.max(-11, App.state.transpose - 1); App.renderAll(); });
 el.trUp.addEventListener('click', () => { App.state.transpose = Math.min(11, App.state.transpose + 1); App.renderAll(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) setAuto(false); });
+
+/* speelstand: alleen het blad, groot, scherm blijft aan */
+let wake = null;
+async function setPlayMode(on) {
+  document.body.classList.toggle('playmode', on);
+  $('playBar').hidden = !on;
+  if (on) { try { wake = await navigator.wakeLock.request('screen'); } catch { wake = null; } window.scrollTo({ top: 0 }); }
+  else { try { wake && wake.release(); } catch {} wake = null; setAuto(false); }
+}
+$('lyPlay').addEventListener('click', () => setPlayMode(true));
+$('playExit').addEventListener('click', () => setPlayMode(false));
+$('playToggle').addEventListener('click', () => App.els.play.click());
+$('playAuto').addEventListener('click', () => setAuto(!autoOn));
+App.els.audio.addEventListener('play', () => $('playToggle').textContent = '❚❚');
+App.els.audio.addEventListener('pause', () => $('playToggle').textContent = '▶');
+App.onTick(t => { if (document.body.classList.contains('playmode')) $('playTime').textContent = App.fmt(t); });
 
 load();
 })();

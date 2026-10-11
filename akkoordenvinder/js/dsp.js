@@ -1,12 +1,13 @@
 /* dsp.js — akkoordherkenning: FFT, chroma, toonsoort, Viterbi en een live-detector voor de microfoon. */
-window.DSP = (() => {
+(typeof window !== 'undefined' ? window : self).DSP = (() => {
 'use strict';
 
 const SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const FLAT  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
-const SUFFIX = { maj: '', min: 'm', '7': '7', m7: 'm7' };
-const MINORISH = { maj: false, min: true, '7': false, m7: true };
-const INTERVALS = { maj: [0,4,7], min: [0,3,7], '7': [0,4,7,10], m7: [0,3,7,10] };
+const SUFFIX = { maj: '', min: 'm', '7': '7', m7: 'm7', sus2: 'sus2', sus4: 'sus4', dim: 'dim', maj7: 'maj7' };
+const MINORISH = { maj: false, min: true, '7': false, m7: true, sus2: false, sus4: false, dim: true, maj7: false };
+const INTERVALS = { maj: [0,4,7], min: [0,3,7], '7': [0,4,7,10], m7: [0,3,7,10], sus2: [0,2,7], sus4: [0,5,7], dim: [0,3,6], maj7: [0,4,7,11] };
+const QUALS = { basic: ['maj', 'min'], ext: ['maj', 'min', '7', 'm7'], full: ['maj', 'min', '7', 'm7', 'sus2', 'sus4', 'dim', 'maj7'] };
 const DEG_MAJ = ['I','bII','II','bIII','III','IV','#IV','V','bVI','VI','bVII','VII'];
 const DEG_MIN = ['I','bII','II','III','#III','IV','bV','V','VI','#VI','VII','#VII'];
 const KS_MAJ = [6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88];
@@ -49,6 +50,44 @@ function binMap(sr, n, tuning) {
     isBass[k] = freq <= BASS_MAX ? 1 : 0;
   }
   return { kMin, kMax, nb, pcOf, wOf, isBass };
+}
+
+/* ---------- beats: onset-envelope (FFT 1024, hop 256), tempo via autocorrelatie, fase via kamfilter ---------- */
+function beatTrack(x, sr) {
+  const n = 1024, hop = 256, fft = getFFT(n), win = hann(n);
+  const nF = Math.max(1, Math.floor((x.length - n) / hop) + 1), nb = n / 2;
+  const re = new Float64Array(n), im = new Float64Array(n), prev = new Float32Array(nb), onset = new Float32Array(nF);
+  for (let f = 0; f < nF; f++) {
+    const o = f * hop;
+    for (let i = 0; i < n; i++) { re[i] = (o + i < x.length ? x[o + i] : 0) * win[i]; im[i] = 0; }
+    fft(re, im);
+    let s = 0;
+    for (let k = 1; k < nb; k++) { const lg = Math.log1p(100 * Math.hypot(re[k], im[k])); const d = lg - prev[k]; if (d > 0) s += d; prev[k] = lg; }
+    onset[f] = s;
+  }
+  // lokaal gemiddelde eraf (adaptieve drempel)
+  const env = new Float32Array(nF);
+  for (let f = 0; f < nF; f++) { let m = 0, c = 0; for (let d = -8; d <= 8; d++) { const g = f + d; if (g >= 0 && g < nF) { m += onset[g]; c++; } } env[f] = Math.max(0, onset[f] - m / c); }
+  const fps = sr / hop, minLag = Math.round(fps * 60 / 180), maxLag = Math.round(fps * 60 / 60);
+  let bestLag = 0, bestR = -1;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let r = 0; for (let f = lag; f < nF; f++) r += env[f] * env[f - lag];
+    const bpm = 60 * fps / lag, w = Math.exp(-0.5 * ((Math.log2(bpm / 115)) / 0.6) ** 2); // zachte voorkeur rond 115 bpm
+    r *= w; if (r > bestR) { bestR = r; bestLag = lag; }
+  }
+  if (!bestLag) return { bpm: 0, beats: [], bars: [] };
+  // verfijning met parabolische interpolatie van de lag
+  const rr = l => { let r = 0; for (let f = l; f < nF; f++) r += env[f] * env[f - l]; return r; };
+  const a = rr(bestLag - 1), b = rr(bestLag), c = rr(bestLag + 1), den = a - 2 * b + c;
+  const period = bestLag + (den !== 0 ? 0.5 * (a - c) / den : 0);
+  let bestOff = 0, bestS = -1;
+  for (let off = 0; off < period; off += 0.5) { let s = 0; for (let t = off; t < nF; t += period) s += env[Math.round(t)] || 0; if (s > bestS) { bestS = s; bestOff = off; } }
+  const beats = []; for (let t = bestOff; t < nF; t += period) beats.push((t * hop + n / 2) / sr);
+  // maatstart (4/4): fase met de meeste onset-energie
+  let bestPh = 0, bestPS = -1;
+  for (let ph = 0; ph < 4; ph++) { let s = 0; for (let i = ph; i < beats.length; i += 4) { const f = Math.round((beats[i] * sr - n / 2) / hop); s += env[f] || 0; } if (s > bestPS) { bestPS = s; bestPh = ph; } }
+  const bars = beats.filter((_, i) => i % 4 === bestPh);
+  return { bpm: Math.round(60 * fps / period * 10) / 10, beats, bars };
 }
 
 /* ---------- kenmerken van een heel bestand ---------- */
@@ -124,6 +163,13 @@ async function extractFeatures(x, sr, opts = {}) {
     if (map.isBass[k]) rawB[f * 12 + map.pcOf[k]] += c;
   }
 
+  // temporele mediaan (5 frames) per toonklasse: dempt drums en transiënten (goedkope HPSS-benadering)
+  const medC = new Float32Array(nF * 12), tmp = new Float32Array(5);
+  for (let p = 0; p < 12; p++) for (let f = 0; f < nF; f++) {
+    let c = 0; for (let d = -2; d <= 2; d++) { const g = Math.min(nF - 1, Math.max(0, f + d)); tmp[c++] = rawC[g * 12 + p]; }
+    const s = Array.from(tmp).sort((a, b) => a - b); medC[f * 12 + p] = s[2];
+  }
+  rawC.set(medC);
   const chroma = new Float32Array(nF * 12), bass = new Float32Array(nF * 12), silent = new Uint8Array(nF);
   const rmsSorted = Array.from(rms).sort((a, b) => a - b);
   const rmsRef = rmsSorted[Math.floor(rmsSorted.length * 0.95)] || 1;
@@ -146,8 +192,10 @@ async function extractFeatures(x, sr, opts = {}) {
       if (!silent[f]) keySum[p] += rawC[f * 12 + p];
     }
   }
-  progress(0.95);
-  return { nF, n, hop, sr, chroma, bass, silent, tuning, key: estimateKey(keySum), vocal, vocalOnsets, vocalStart, vocalEnd };
+  progress(0.93); await tick();
+  const bt = beatTrack(x, sr);
+  progress(0.97);
+  return { nF, n, hop, sr, chroma, bass, silent, tuning, key: estimateKey(keySum), vocal, vocalOnsets, vocalStart, vocalEnd, bpm: bt.bpm, beats: bt.beats, bars: bt.bars };
 }
 
 /* ---------- toonsoort (Krumhansl-Schmuckler) ---------- */
@@ -184,7 +232,7 @@ function makeTemplate(root, q) {
   return t;
 }
 function chordSet(detail) {
-  const quals = detail === 'ext' ? ['maj', 'min', '7', 'm7'] : ['maj', 'min'];
+  const quals = QUALS[detail] || QUALS.basic;
   const out = [];
   for (const q of quals) for (let r = 0; r < 12; r++) out.push({ root: r, q, t: makeTemplate(r, q) });
   return out;
@@ -198,10 +246,16 @@ function isDiatonic(ch, key) {
 /* ---------- Viterbi over een heel bestand ---------- */
 function recognise(F, { detail = 'basic', stability = 1.6, duration }) {
   const chords = chordSet(detail);
-  const S = chords.length + 1, NC = chords.length, nF = F.nF, P = stability;
+  const S = chords.length + 1, NC = chords.length, nF = F.nF;
   const back = new Int16Array(nF * S), raw = new Float32Array(nF * S);
   let D = new Float64Array(S), ND = new Float64Array(S);
-  const prior = chords.map(c => (isDiatonic(c, F.key) ? 0.04 : 0) - (c.q === '7' || c.q === 'm7' ? 0.05 : 0));
+  const extra = q => q === '7' || q === 'm7' ? 0.05 : (q === 'sus2' || q === 'sus4' || q === 'dim' || q === 'maj7') ? 0.09 : 0;
+  const prior = chords.map(c => (isDiatonic(c, F.key) ? 0.04 : 0) - extra(c.q));
+  // wisselstraf per frame: lager op een beat, nog lager op een maatstart
+  const frameTime = f => (f * F.hop + F.n / 2) / F.sr, half = F.hop / F.sr / 2;
+  const near = (arr, t) => { if (!arr || !arr.length) return false; let lo = 0, hi = arr.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] < t) lo = m + 1; else hi = m; } return Math.abs(arr[lo] - t) <= half || (lo > 0 && Math.abs(arr[lo - 1] - t) <= half); };
+  const pen = new Float64Array(nF);
+  for (let f = 0; f < nF; f++) { const t = frameTime(f); pen[f] = stability * (near(F.bars, t) ? 0.4 : near(F.beats, t) ? 0.6 : 1); }
 
   for (let f = 0; f < nF; f++) {
     const em = new Float64Array(S), o = f * 12;
@@ -214,6 +268,7 @@ function recognise(F, { detail = 'basic', stability = 1.6, duration }) {
     em[NC] = F.silent[f] ? 1.5 : 0.2;
     if (f === 0) { for (let s = 0; s < S; s++) { D[s] = em[s]; back[s] = s; } continue; }
     let b = 0; for (let s = 1; s < S; s++) if (D[s] > D[b]) b = s;
+    const P = pen[f];
     for (let s = 0; s < S; s++) {
       const stay = D[s], sw = D[b] - P;
       if (s === b || stay >= sw) { ND[s] = stay + em[s]; back[f * S + s] = s; }
@@ -225,6 +280,26 @@ function recognise(F, { detail = 'basic', stability = 1.6, duration }) {
   let s = 0; for (let i = 1; i < S; i++) if (D[i] > D[s]) s = i;
   for (let f = nF - 1; f >= 0; f--) { path[f] = s; s = back[f * S + s]; }
 
+  // segmenten korter dan één beat samenvoegen met de buur waarvan het akkoord het best past
+  const beatFrames = F.bpm ? Math.max(1, Math.round(60 / F.bpm * F.sr / F.hop)) : 1;
+  const score = (f0, f1, st) => { if (st === NC) return -1; let s = 0; for (let f = f0; f <= f1; f++) s += raw[f * S + st]; return s / (f1 - f0 + 1); };
+  let changed = true;
+  while (changed) {
+    changed = false;
+    let f = 0;
+    while (f < nF) {
+      let g = f; while (g + 1 < nF && path[g + 1] === path[f]) g++;
+      const len = g - f + 1;
+      if (len < beatFrames && (f > 0 || g < nF - 1)) {
+        const prevSt = f > 0 ? path[f - 1] : -1, nextSt = g < nF - 1 ? path[g + 1] : -1;
+        const sp = prevSt >= 0 ? score(f, g, prevSt) : -Infinity, sn = nextSt >= 0 ? score(f, g, nextSt) : -Infinity;
+        const to = sp >= sn ? prevSt : nextSt;
+        if (to >= 0 && to !== path[f]) { for (let k = f; k <= g; k++) path[k] = to; changed = true; }
+      }
+      f = g + 1;
+    }
+  }
+
   const bound = f => f === 0 ? 0 : Math.min(duration, (f * F.hop + F.n / 2 - F.hop / 2) / F.sr);
   const segs = [];
   for (let f = 0; f < nF; f++) {
@@ -232,10 +307,17 @@ function recognise(F, { detail = 'basic', stability = 1.6, duration }) {
     if (last && last.state === st) { last.f1 = f; last.sum += raw[f * S + st]; last.n++; }
     else segs.push({ state: st, f0: f, f1: f, sum: st === NC ? 0 : raw[f * S + st], n: 1 });
   }
+  // basnoot: als één akkoordtoon (niet de grondtoon) het grootste deel van het segment in de bas domineert -> C/E
+  const bassOf = g => {
+    const ch = chords[g.state], tones = INTERVALS[ch.q].map(iv => mod12(ch.root + iv)), cnt = new Int32Array(12);
+    for (let f = g.f0; f <= g.f1; f++) { let b = 0; for (let p = 1; p < 12; p++) if (F.bass[f * 12 + p] > F.bass[f * 12 + b]) b = p; if (F.bass[f * 12 + b] > 0.5) cnt[b]++; }
+    let best = -1; for (let p = 0; p < 12; p++) if (best < 0 || cnt[p] > cnt[best]) best = p;
+    return best >= 0 && best !== ch.root && tones.includes(best) && cnt[best] >= 0.7 * (g.f1 - g.f0 + 1) ? best : null;
+  };
   return segs.map((g, i) => ({
     start: bound(g.f0),
     end: i === segs.length - 1 ? duration : bound(g.f1 + 1),
-    chord: g.state === NC ? null : { root: chords[g.state].root, q: chords[g.state].q },
+    chord: g.state === NC ? null : { root: chords[g.state].root, q: chords[g.state].q, bass: bassOf(g) },
     conf: g.state === NC ? 1 : g.sum / g.n
   })).filter(g => g.end > g.start);
 }
@@ -332,14 +414,15 @@ function prefersFlats(root, mode) {
 }
 function chordName(ch, { shift = 0, flats = false } = {}) {
   if (!ch) return 'N.C.';
-  return (flats ? FLAT : SHARP)[mod12(ch.root + shift)] + SUFFIX[ch.q];
+  const names = flats ? FLAT : SHARP;
+  return names[mod12(ch.root + shift)] + SUFFIX[ch.q] + (ch.bass != null ? '/' + names[mod12(ch.bass + shift)] : '');
 }
 function roman(ch, key) {
   if (!ch || !key) return '';
   const d = mod12(ch.root - key.root);
   let r = (key.mode === 'maj' ? DEG_MAJ : DEG_MIN)[d];
   if (MINORISH[ch.q]) r = r.toLowerCase();
-  return r + (ch.q === '7' || ch.q === 'm7' ? '7' : '');
+  return r + (ch.q === '7' || ch.q === 'm7' ? '7' : ch.q === 'maj7' ? 'maj7' : ch.q === 'dim' ? '°' : ch.q === 'sus2' || ch.q === 'sus4' ? ch.q : '');
 }
 const hueOf = ch => ch ? (mod12(ch.root * 7) * 30 + 215) % 360 : 0;
 function keyName(key, shift = 0) {
@@ -348,6 +431,6 @@ function keyName(key, shift = 0) {
   return (prefersFlats(r, key.mode) ? FLAT : SHARP)[r] + (key.mode === 'maj' ? ' majeur' : ' mineur');
 }
 
-return { SHARP, FLAT, SUFFIX, MINORISH, INTERVALS, mod12, extractFeatures, recognise, estimateKey, LiveDetector,
+return { SHARP, FLAT, SUFFIX, MINORISH, INTERVALS, QUALS, mod12, extractFeatures, recognise, estimateKey, LiveDetector, beatTrack,
          prefersFlats, chordName, roman, hueOf, keyName, tick };
 })();

@@ -28,52 +28,59 @@ const A_SHAPE = { maj: [-1,0,2,2,2,0], min: [-1,0,2,2,1,0], '7': [-1,0,2,0,2,0],
 function guitarShape(root, q) {
   const open = OPEN[root + ':' + q];
   if (open) return { frets: open, barre: 0 };
-  const rE = mod12(root - 4) || 12, rA = mod12(root - 9) || 12;
-  const useE = rE <= rA, r = useE ? rE : rA, base = useE ? E_SHAPE[q] : A_SHAPE[q];
-  return { frets: base.map(f => f < 0 ? -1 : f + r), barre: r };
+  if (E_SHAPE[q]) {
+    const rE = mod12(root - 4) || 12, rA = mod12(root - 9) || 12;
+    const useE = rE <= rA, r = useE ? rE : rA, base = useE ? E_SHAPE[q] : A_SHAPE[q];
+    return { frets: base.map(f => f < 0 ? -1 : f + r), barre: r };
+  }
+  return searchShape(TUNING.guitar, root, q, { maxFret: 7, mute: 2 }); // sus, dim, maj7: beste greep zoeken
 }
 
-/* ---------- ukelele: beste greep zoeken ---------- */
-const ukeCache = new Map();
-function ukuleleShape(root, q) {
-  const key = root + ':' + q;
-  if (ukeCache.has(key)) return ukeCache.get(key);
-  const tuning = TUNING.ukulele, tones = INTERVALS[q].map(iv => mod12(root + iv));
-  const options = tuning.map(open => {
+/* ---------- beste greep zoeken (ukelele altijd, gitaar voor bijzondere akkoorden) ---------- */
+const shapeCache = new Map();
+function searchShape(tuning, root, q, { maxFret = 12, mute = 0 } = {}) {
+  const key = tuning.join(',') + ':' + root + ':' + q;
+  if (shapeCache.has(key)) return shapeCache.get(key);
+  const tones = INTERVALS[q].map(iv => mod12(root + iv)), nS = tuning.length;
+  const options = tuning.map((open, s) => {
     const o = [];
-    for (let f = 0; f <= 12; f++) if (tones.includes(mod12(open + f))) o.push(f);
+    for (let f = 0; f <= maxFret; f++) if (tones.includes(mod12(open + f))) o.push(f);
+    if (s < mute) o.push(-1);
     return o;
   });
   let best = null;
   const walk = (i, frets) => {
-    if (i === tuning.length) {
-      const pcs = new Set(frets.map((f, s) => mod12(tuning[s] + f)));
+    if (i === nS) {
+      const played = frets.filter(f => f >= 0); if (played.length < Math.min(3, nS)) return;
+      const pcs = new Set(frets.map((f, s) => f < 0 ? -1 : mod12(tuning[s] + f)));
       if (!pcs.has(tones[0]) || !pcs.has(tones[1]) || !pcs.has(tones[2])) return;
       const fretted = frets.filter(f => f > 0), maxF = Math.max(0, ...fretted), minF = fretted.length ? Math.min(...fretted) : 0;
       const span = fretted.length ? maxF - minF : 0;
-      if (span > 4) return;
-      let score = maxF * 2 + span * 1.5 + fretted.length * 0.6;
+      if (span > 4 || fretted.length > 4 + (frets.filter(f => f === minF).length > 1 ? 2 : 0)) return;
+      let score = maxF * 2 + span * 1.5 + fretted.length * 0.6 + frets.filter(f => f < 0).length * 1.2;
       if (tones.length === 4 && !pcs.has(tones[3])) score += 3;
-      if (frets[3] > 0 && mod12(tuning[3] + frets[3]) === tones[0]) score -= 0.5;
+      const low = frets.findIndex(f => f >= 0);
+      if (low >= 0 && mod12(tuning[low] + frets[low]) === tones[0]) score -= 1;
       if (!best || score < best.score) best = { frets: frets.slice(), score };
       return;
     }
     for (const f of options[i]) { frets.push(f); walk(i + 1, frets); frets.pop(); }
   };
   walk(0, []);
-  const frets = best ? best.frets : [0, 0, 0, 0];
+  const frets = best ? best.frets : tuning.map(() => 0);
   const fretted = frets.filter(f => f > 0), minF = fretted.length ? Math.min(...fretted) : 0;
   const barre = (minF > 0 && !frets.includes(0) && frets.filter(f => f === minF).length >= 2) ? minF : 0;
   const res = { frets, barre };
-  ukeCache.set(key, res);
+  shapeCache.set(key, res);
   return res;
 }
+const ukuleleShape = (root, q) => searchShape(TUNING.ukulele, root, q);
 
 /* ---------- bas: grondtoon, terts, kwint, octaaf ---------- */
 function bassShape(root, q) {
   let s = 0, f = mod12(root - 4);
   if (f > 7) { s = 1; f = mod12(root - 9); }
-  const third = INTERVALS[q][1];
+  const third = INTERVALS[q][1] === 5 || INTERVALS[q][1] === 2 ? 4 : INTERVALS[q][1];
   const dots = [{ s, f, l: 'R' }, { s: s + 1, f: f + 2, l: '5' }, { s: s + 2, f: f + 2, l: '8' }];
   const tf = f + third - 5;
   if (tf >= 0) dots.push({ s: s + 1, f: tf, l: '3' }); else dots.push({ s, f: f + third, l: '3' });

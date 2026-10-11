@@ -81,6 +81,17 @@ function transposeToken(tok, shift, flats) {
 }
 function transposeRow(row, shift, flats) { return row.replace(/\S+/g, t => transposeToken(t, shift, flats)); }
 
+/* tekenposities van lettergrepen (klinkergroepen) in een regel; elk woord minstens één */
+function syllablePositions(text) {
+  const out = [], re = /[A-Za-zÀ-ÿ']+/g; let m;
+  while ((m = re.exec(text))) {
+    const w = m[0], vs = [...w.matchAll(/[aeiouyáéíóúàèëïöüâêîôûAEIOUY]+/g)];
+    if (!vs.length) { out.push(m.index); continue; }
+    vs.forEach((v, i) => out.push(i === 0 ? m.index : m.index + v.index));
+  }
+  return out;
+}
+
 /* regels + akkoordsegmenten -> rijen met akkoordregel boven de tekstregel */
 function placeChords(lines, segments, nameFn, { shift = 0, flats = false } = {}) {
   const synced = lines.filter(l => kindOf(l) === 'text' && l.t != null).sort((a, b) => a.t - b.t);
@@ -92,12 +103,14 @@ function placeChords(lines, segments, nameFn, { shift = 0, flats = false } = {})
     if (line.manual != null) return { idx, kind, text: line.text, chordRow: transposeRow(line.manual, shift, flats), t: line.t, manual: true };
     if (line.t == null) return { idx, kind, text: line.text, chordRow: '', t: null };
     const pos = synced.indexOf(line), next = synced[pos + 1], t0 = line.t, t1 = next ? next.t : t0 + 4;
-    const len = Math.max(line.text.length, 1), cells = [];
+    // positie op lettergreepniveau: tijd-fractie -> lettergreep -> tekenpositie van die lettergreep
+    const syls = syllablePositions(line.text), nSyl = Math.max(1, syls.length), cells = [];
+    const charAt = frac => { const i = Math.min(nSyl - 1, Math.max(0, Math.round(frac * nSyl))); return syls.length ? syls[i] : 0; };
     const sounding = chordAt(t0);
     if (sounding) cells.push({ at: 0, name: nameFn(sounding) });
     for (const s of segments) {
       if (s.start <= t0 || s.start >= t1 || !s.chord) continue;
-      cells.push({ at: Math.min(len - 1, Math.round((s.start - t0) / (t1 - t0) * len)), name: nameFn(s.chord) });
+      cells.push({ at: charAt((s.start - t0) / (t1 - t0)), name: nameFn(s.chord) });
     }
     let row = '', cursor = 0;
     for (const c of cells) { const at = Math.max(c.at, cursor); row += ' '.repeat(at - row.length) + c.name; cursor = row.length + 1; }
@@ -131,5 +144,5 @@ function activeIndex(lines, t) {
   return best;
 }
 
-return { parse, parseLRC, parseAny, fromEntries, guessFromName, toSource, placeChords, renderHTML, toText, activeIndex, kindOf, transposeToken };
+return { parse, parseLRC, parseAny, fromEntries, guessFromName, toSource, placeChords, renderHTML, toText, activeIndex, kindOf, transposeToken, syllablePositions };
 })();

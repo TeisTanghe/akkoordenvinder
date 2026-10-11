@@ -42,7 +42,8 @@ function renderFacts() {
     els.tuning.textContent = 'A = ' + Math.round(440 * 2 ** (state.feat.tuning / 12)) + ' Hz';
     const cents = Math.round(state.feat.tuning * 100);
     els.tuning.title = (cents >= 0 ? '+' : '') + cents + ' cent t.o.v. A = 440 Hz';
-  } else els.tuning.textContent = '–';
+    $('bpm').textContent = state.feat.bpm ? Math.round(state.feat.bpm) + ' bpm' : '–';
+  } else { els.tuning.textContent = '–'; $('bpm').textContent = '–'; }
   els.trVal.textContent = (state.transpose > 0 ? '+' : '') + state.transpose;
   els.capoField.hidden = !Instruments.hasCapo(state.instrument);
 }
@@ -212,16 +213,22 @@ function liveKey(k) { state.key = k; renderFacts(); renderCards(); updateNow(sta
 function liveTick(time) { state.liveTime = time; for (const fn of tickFns) fn(time); }
 
 /* ---------- instellingen ---------- */
-function reanalyse() { if (state.feat) { state.segments = recognise(state.feat, { detail: state.detail, stability: state.stability, duration: state.duration }); } renderAll(); }
+/* correcties van de gebruiker bewaren per liedje (naam + duur) */
+const segKey = () => state.file && state.file.name ? 'av-seg:' + state.file.name : null;
+function saveSegments() { const k = segKey(); if (!k) return; try { localStorage.setItem(k, JSON.stringify({ duration: state.duration, segments: state.segments })); } catch {} if (state.file) state.file.segments = state.segments; }
+function storedSegments(name, duration) { try { const s = JSON.parse(localStorage.getItem('av-seg:' + name) || 'null'); return s && Math.abs(s.duration - duration) < 0.5 ? s.segments : null; } catch { return null; } }
+function reanalyse() {
+  if (state.feat) { state.segments = recognise(state.feat, { detail: state.detail, stability: state.stability, duration: state.duration }); const k = segKey(); if (k) { try { localStorage.removeItem(k); } catch {} } if (state.file) state.file.segments = state.segments; }
+  renderAll();
+}
+const detBtns = { basic: els.detBasic, ext: els.detExt, full: $('detFull') };
 function setDetail(d) {
   state.detail = d; saveSettings();
-  els.detBasic.setAttribute('aria-pressed', d === 'basic'); els.detExt.setAttribute('aria-pressed', d === 'ext');
+  for (const k in detBtns) detBtns[k].setAttribute('aria-pressed', k === d);
   document.dispatchEvent(new CustomEvent('av:detail', { detail: d }));
   reanalyse();
 }
-els.detBasic.addEventListener('click', () => setDetail('basic'));
-els.detExt.addEventListener('click', () => setDetail('ext'));
-els.detBasic.setAttribute('aria-pressed', state.detail === 'basic'); els.detExt.setAttribute('aria-pressed', state.detail === 'ext');
+for (const k in detBtns) { detBtns[k].addEventListener('click', () => setDetail(k)); detBtns[k].setAttribute('aria-pressed', state.detail === k); }
 els.stab.value = state.stability;
 els.stab.addEventListener('input', () => { state.stability = +els.stab.value; saveSettings(); reanalyse(); });
 els.trDown.addEventListener('click', () => { state.transpose = Math.max(-11, state.transpose - 1); renderAll(); });
@@ -276,13 +283,24 @@ async function toMono(buf) {
   const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
   return (await off.startRendering()).getChannelData(0);
 }
+/* kenmerken in een Web Worker berekenen (valt terug op de hoofdthread als dat niet kan) */
+function runExtract(x, sr, progress) {
+  if (!window.Worker) return extractFeatures(x, sr, { progress });
+  return new Promise((resolve, reject) => {
+    let w;
+    try { w = new Worker('js/worker.js'); } catch { return extractFeatures(x, sr, { progress }).then(resolve, reject); }
+    w.onmessage = e => { const d = e.data; if (d.type === 'progress') progress(d.p); else if (d.type === 'done') { w.terminate(); resolve(d.feat); } else { w.terminate(); reject(new Error(d.message)); } };
+    w.onerror = () => { w.terminate(); extractFeatures(x, sr, { progress }).then(resolve, reject); };
+    w.postMessage({ x, sr }, [x.buffer]);
+  });
+}
 async function analyseBuffer(buf, name) {
   state.duration = buf.duration;
   setStatus('Geluid omzetten…', 0.05);
   const x = await toMono(buf);
-  const feat = await extractFeatures(x, SR, { progress: f => setStatus('Akkoorden zoeken…', f) });
+  const feat = await runExtract(x, SR, f => setStatus('Akkoorden zoeken…', f));
   state.feat = feat; state.key = feat.key;
-  state.segments = recognise(feat, { detail: state.detail, stability: state.stability, duration: state.duration });
+  state.segments = (name && storedSegments(name, state.duration)) || recognise(feat, { detail: state.detail, stability: state.stability, duration: state.duration });
   state.file = { feat, key: feat.key, segments: state.segments, duration: state.duration, name };
   renderAll();
   setStatus('');
@@ -386,14 +404,41 @@ async function loadDemo() {
 }
 
 /* ---------- akkoord-popup: zo speel je dit akkoord, op elk instrument ---------- */
-const pop = { box: $('chordPop'), name: $('popName'), grid: $('popGrid'), close: $('popClose'), back: $('popBack') };
-function showChord(ch, label) {
-  if (!ch) return;
-  const v = view(), name = label || nameOf(ch, v);
+const pop = { box: $('chordPop'), name: $('popName'), grid: $('popGrid'), close: $('popClose'), back: $('popBack'), edit: $('popEdit'), root: $('edRoot'), qual: $('edQual') };
+let editIdx = -1;
+function showChord(ch, label, idx) {
+  const v = view();
+  editIdx = typeof idx === 'number' ? idx : -1;
+  pop.edit.hidden = editIdx < 0;
+  if (editIdx >= 0) {
+    const names = v.flats ? window.DSP.FLAT : window.DSP.SHARP;
+    pop.root.innerHTML = names.map((nm, i) => `<option value="${i}">${nm}</option>`).join('');
+    pop.qual.innerHTML = window.DSP.QUALS.full.map(q => `<option value="${q}">${window.DSP.SUFFIX[q] || 'majeur'}</option>`).join('');
+    if (ch) { pop.root.value = mod12(ch.root + v.shift); pop.qual.value = ch.q; }
+  }
+  if (!ch) { pop.name.textContent = 'N.C.'; pop.grid.innerHTML = '<p class="hint">Geen akkoord (stilte of alleen ritme). Kies hieronder een akkoord als dat niet klopt.</p>'; pop.box.hidden = false; pop.back.hidden = false; return; }
+  const name = label || nameOf(ch, v);
   pop.name.textContent = name;
   pop.grid.innerHTML = Instruments.LIST.map(i => `<div class="shape"><span class="lbl">${i.name}</span>${Instruments.render(i.id, ch, { ...v, label: name })}</div>`).join('');
   pop.box.hidden = false; pop.back.hidden = false;
 }
+/* correcties: akkoord wijzigen, samenvoegen, begin verschuiven */
+function applyEdit(kind) {
+  const i = editIdx, segs = state.segments, g = segs[i]; if (!g) return;
+  const v = view();
+  if (kind === 'set') g.chord = { root: mod12(+pop.root.value - v.shift), q: pop.qual.value, bass: null };
+  else if (kind === 'nc') g.chord = null;
+  else if (kind === 'prev' && i > 0) { segs[i - 1].end = g.end; segs.splice(i, 1); }
+  else if (kind === 'next' && i < segs.length - 1) { segs[i + 1].start = g.start; segs.splice(i, 1); }
+  else if (kind === 'earlier' || kind === 'later') {
+    const d = kind === 'earlier' ? -0.2 : 0.2, lo = i > 0 ? segs[i - 1].start + 0.2 : 0, hi = g.end - 0.2;
+    const ns = Math.max(lo, Math.min(hi, g.start + d));
+    if (i > 0) segs[i - 1].end = ns; g.start = ns;
+  }
+  if (g.conf != null) g.conf = 1;
+  saveSegments(); renderAll(); hidePop();
+}
+document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => applyEdit(b.dataset.edit)));
 const NAME_IDX = {}; window.DSP.SHARP.forEach((x, i) => NAME_IDX[x] = i); window.DSP.FLAT.forEach((x, i) => NAME_IDX[x] = i);
 function showChordByName(name) {
   const m = String(name).match(/^([A-G](?:#|b)?)(.*)$/); if (!m) return;
@@ -404,10 +449,17 @@ function showChordByName(name) {
 const hidePop = () => { pop.box.hidden = true; pop.back.hidden = true; };
 pop.close.addEventListener('click', hidePop); pop.back.addEventListener('click', hidePop);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') hidePop(); });
-els.nowMain.addEventListener('click', () => { const g = state.segments[state.activeIdx]; if (g) showChord(g.chord); });
-els.cards.addEventListener('contextmenu', e => { const b = e.target.closest('.card'); if (b) { e.preventDefault(); showChord(state.segments[+b.dataset.i].chord); } });
+els.nowMain.addEventListener('click', () => { const g = state.segments[state.activeIdx]; if (g) showChord(g.chord, null, state.activeIdx); });
+els.cards.addEventListener('contextmenu', e => { const b = e.target.closest('.card'); if (b) { e.preventDefault(); showChord(state.segments[+b.dataset.i].chord, null, +b.dataset.i); } });
 els.shapes.addEventListener('click', e => { const s = e.target.closest('.shape'); if (!s) return; showChordByName(s.querySelector('b').textContent); });
-els.cards.addEventListener('click', e => { const b = e.target.closest('.card'); if (b && state.mode !== 'file') showChord(state.segments[+b.dataset.i].chord); });
+let cardPress = 0, cardPressed = false;
+els.cards.addEventListener('pointerdown', e => {
+  const b = e.target.closest('.card'); if (!b) return;
+  cardPressed = false; clearTimeout(cardPress);
+  cardPress = setTimeout(() => { cardPressed = true; if (navigator.vibrate) navigator.vibrate(30); showChord(state.segments[+b.dataset.i].chord, null, +b.dataset.i); }, 550);
+});
+['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => els.cards.addEventListener(ev, () => clearTimeout(cardPress)));
+els.cards.addEventListener('click', e => { if (cardPressed) { cardPressed = false; e.stopImmediatePropagation(); return; } const b = e.target.closest('.card'); if (b && state.mode !== 'file') showChord(state.segments[+b.dataset.i].chord, null, +b.dataset.i); }, true);
 
 /* ---------- start ---------- */
 renderInstruments(); renderFacts();
